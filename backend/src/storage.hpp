@@ -4,7 +4,8 @@
 #include <optional>
 #include <string>
 
-class IOrderStore {
+class IOrderStore
+{
 public:
     virtual ~IOrderStore() = default;
 
@@ -15,10 +16,10 @@ public:
     virtual std::vector<Order> list() const = 0;
 
     // Lookup by id
-    virtual std::optional<Order> get(const std::string& id) const = 0;
+    virtual std::optional<Order> get(const std::string &id) const = 0;
 
     // Cancel by id (if still NEW or PARTIALLY_FILLED). Returns true if changed.
-    virtual bool cancel(const std::string& id) = 0;
+    virtual bool cancel(const std::string &id) = 0;
 };
 
-IOrderStore* make_memory_store();
+IOrderStore *make_memory_store();

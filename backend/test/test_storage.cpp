@@ -1,4 +1,4 @@
-#include "storage.hpp"
+#include "../src/storage.hpp"
 #include <iostream>
 #include <cassert>
 
@@ -39,3 +39,14 @@ int main(){
     std::cout << "\nOK\n";
     return 0;
 }
+
+/*
+cd backend
+mkdir -p build
+
+clang++ -std=c++20 -O3 -Wall -Wextra \
+  src/storage_memory.cpp src/test_storage.cpp -I src \
+  -o build/test_storage
+
+./build/test_storage
+*/
