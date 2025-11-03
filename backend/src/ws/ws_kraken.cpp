@@ -20,6 +20,8 @@ struct KrakenWs::Impl
 {
     std::string host = "ws.kraken.com";
     std::string path = "/v2";
+    std::string channel = "book";
+    std::string depth = "1000";
     std::string symbol;
     std::string trigger;
     OnMsg on_msg;
@@ -29,7 +31,8 @@ struct KrakenWs::Impl
     std::unique_ptr<websocket::stream<beast::ssl_stream<tcp::socket>>> ws;
     std::atomic<bool> stop_flag{false};
 
-    Impl(std::string sym, OnMsg cb, std::string ev) : symbol(std::move(sym)), trigger(std::move(ev)), on_msg(std::move(cb))
+    Impl(std::string sym, OnMsg cb, std::string ev)
+    : symbol(std::move(sym)), trigger(std::move(ev)), on_msg(std::move(cb))
     {
         ssl_ctx.set_default_verify_paths();
         ssl_ctx.set_verify_mode(net::ssl::verify_peer);
@@ -48,28 +51,31 @@ struct KrakenWs::Impl
             net::connect(beast::get_lowest_layer(*ws), results);
 
             // SNI
-            if (!SSL_set_tlsext_host_name(ws->next_layer().native_handle(), host.c_str()))
-                throw beast::system_error{beast::error_code(static_cast<int>(::ERR_get_error()), net::error::get_ssl_category()), "SNI set failed"};
+            if (!SSL_set_tlsext_host_name(ws->next_layer().native_handle(), host.c_str())) {
+                throw beast::system_error{
+                    beast::error_code(static_cast<int>(::ERR_get_error()), net::error::get_ssl_category()),
+                    "SNI set failed"
+                };
+            }
 
             // TLS handshake
             ws->next_layer().handshake(net::ssl::stream_base::client);
 
             // WS handshake
             ws->set_option(websocket::stream_base::timeout::suggested(beast::role_type::client));
-            ws->set_option(websocket::stream_base::decorator([](websocket::request_type &req)
-                                                             { req.set(http::field::user_agent, std::string("kraken-ws-connector/0.1")); }));
+            ws->set_option(websocket::stream_base::decorator([](websocket::request_type& req){
+                req.set(http::field::user_agent, "kraken-ws-connector/0.3");
+                req.set(http::field::origin, "https://docs.kraken.com");
+            }));
             ws->handshake(host, path);
 
-            // Subscribe to v2 ticker channel. See docs: https://docs.kraken.com/api/docs/websocket-v2/ticker/
-            // {"method":"subscribe","params":{"channel":"ticker","symbol":["BTC/USD"],"event_trigger":"bbo"}}
-            std::string body = std::string("{\"method\":\"subscribe\",\"params\":{\"channel\":\"ticker\",\"symbol\":[\"") + symbol + "\"]";
-            if (!trigger.empty() && (trigger == "bbo" || trigger == "trades"))
-            {
-                body += std::string(",\"event_trigger\":\"") + trigger + "\"";
-            }
-            body += "}}";
+            // Subscribe to v2 "book" channel with depth preference
+            // Docs pattern: {"method":"subscribe","params":{"channel":"book","symbol":["BTC/USD"],"depth":10}}
+            std::string body = std::string("{\"method\":\"subscribe\",\"params\":{\"channel\":\"") + channel
+                               + "\",\"symbol\":[\"" + symbol + "\"],\"depth\":" + depth + "}}";
             ws->write(net::buffer(body));
-
+            
+            // Read loop — throw on unexpected errors; break on expected shutdown
             beast::flat_buffer buffer;
             while (!stop_flag.load(std::memory_order_relaxed))
             {
@@ -78,18 +84,25 @@ struct KrakenWs::Impl
                 ws->read(buffer, ec);
                 if (ec)
                 {
-                    if (ec == websocket::error::closed)
+                    // Expected during stop() or orderly remote shutdown
+                    if (ec == websocket::error::closed ||
+                        ec == net::error::operation_aborted ||
+                        ec == net::error::eof ||
+                        ec == net::error::not_connected ||
+                        ec == beast::errc::not_connected) {
                         break;
+                    }
+                    // Anything else: escalate to outer catch
                     throw beast::system_error{ec};
                 }
                 std::string data = beast::buffers_to_string(buffer.cdata());
-                if (on_msg)
-                    on_msg(data);
+                if (on_msg) on_msg(data); // Callback with received message from websocket
             }
 
-            beast::error_code ec;
-            ws->close(websocket::close_code::normal, ec);
-            (void)ec;
+            if (ws) {
+                beast::error_code close_ec;
+                ws->close(websocket::close_code::normal, close_ec);
+            }
         }
         catch (const std::exception &e)
         {

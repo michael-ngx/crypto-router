@@ -28,8 +28,8 @@ public:
     CoinbaseWs(CoinbaseWs &&) noexcept = default;
     CoinbaseWs &operator=(CoinbaseWs &&) noexcept = default;
 
-    void start(unsigned short port = 443) override; // returns immediately
-    void stop() noexcept override;                  // graceful shutdown
+    void start(unsigned short port = 443) override;
+    void stop() noexcept override;
 
 private:
     struct Impl;
@@ -48,8 +48,8 @@ public:
     KrakenWs(KrakenWs &&) noexcept = default;
     KrakenWs &operator=(KrakenWs &&) noexcept = default;
 
-    void start(unsigned short port = 443) override; // returns immediately
-    void stop() noexcept override;                  // graceful shutdown
+    void start(unsigned short port = 443) override;
+    void stop() noexcept override;
 
 private:
     struct Impl;
