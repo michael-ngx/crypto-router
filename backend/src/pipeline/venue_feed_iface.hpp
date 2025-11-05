@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 #include "md/book.hpp"
-#include "md/top_snapshot.hpp"
+#include "top_snapshot.hpp"
 
 struct IVenueFeed {
     virtual ~IVenueFeed() = default;

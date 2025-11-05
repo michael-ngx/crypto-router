@@ -1,5 +1,5 @@
 #include "../src/pipeline/venue_feed.hpp"
-#include "../src/api/master_feed.hpp"
+#include "../src/pipeline/master_feed.hpp"
 #include "../src/ws/ws.hpp"
 #include "../src/md/book_parser_coinbase.hpp"
 #include "../src/md/book_parser_kraken.hpp"

@@ -6,8 +6,8 @@
 #include <unordered_map>
 #include <mutex>
 
-#include "pipeline/venue_feed_iface.hpp"
-#include "md/top_snapshot.hpp"
+#include "venue_feed_iface.hpp"
+#include "top_snapshot.hpp"
 
 // A unified consolidated top-of-book view for the UI.
 struct UIConsolidated {

@@ -14,7 +14,7 @@
 #include "md/book.hpp"
 #include "md/book_events.hpp"
 #include "md/symbol_codec.hpp"
-#include "md/top_snapshot.hpp"
+#include "top_snapshot.hpp"
 
 // Backpressure policy when the queue is full
 enum class Backpressure {
