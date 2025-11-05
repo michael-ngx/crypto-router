@@ -8,11 +8,13 @@
 #include <chrono>
 #include <iostream>
 
+#include "venue_feed_iface.hpp"
 #include "util/spsc_ring.hpp"
 #include "ws/ws.hpp"
 #include "md/book.hpp"
 #include "md/book_events.hpp"
 #include "md/symbol_codec.hpp"
+#include "md/top_snapshot.hpp"
 
 // Backpressure policy when the queue is full
 enum class Backpressure {
@@ -25,23 +27,25 @@ enum class Backpressure {
 // Each VenueFeed owns:
 //  - a WS connector (producer thread lives in ws_thread_)
 //  - an SPSC ring for raw messages
-//  - a consumer thread that parses & applies to a per-venue full-depth Book
+//  - a consumer thread that parses & applies to
+//  - a per-venue full-depth Book
 template <typename WsT, typename ParserT, std::size_t QueuePow2 = 4096>
-class VenueFeed {
+class VenueFeed final : public IVenueFeed {
 public:
     VenueFeed(std::string venue_name,
               std::string canonical_symbol,
-              Backpressure bp = Backpressure::DropOldest)
+              Backpressure bp = Backpressure::DropOldest,
+              std::size_t top_depth = 10)
     : venue_(std::move(venue_name))
     , canonical_(std::move(canonical_symbol))
     , backpressure_(bp)
     , running_(false)
-    , book_(venue_, canonical_)        // full-depth book
-    {}
+    , top_depth_(top_depth)
+    , book_(venue_, canonical_) {}
 
     // Start: constructs WS with an enqueue-only callback and starts consumer thread.
     // `venue_symbol` must be formatted for the venue (use SymbolCodec::to_venue).
-    void start_ws(const std::string& venue_symbol, unsigned short port = 443) {
+    void start_ws(const std::string& venue_symbol, unsigned short port = 443) override {
         // Build WS with a lightweight callback that only enqueues strings
         ws_ = std::make_unique<WsT>(venue_symbol, [this](const std::string& raw){
             std::string msg(raw);
@@ -73,22 +77,57 @@ public:
         });
     }
 
-    // Stop: orderly stop consumer + websocket
-    void stop() {
+    // Orderly stop consumer + websocket
+    void stop() override {
         running_.store(false, std::memory_order_relaxed);
         if (ws_) ws_->stop();
         if (ws_thread_.joinable()) ws_thread_.join();
         if (consumer_.joinable()) consumer_.join();
     }
 
-    Book& book() noexcept { return book_; }
-    const Book& book() const noexcept { return book_; }
+    // Atomic load for UI/router readers (lock-free)
+    std::shared_ptr<const TopSnapshot> load_top() const noexcept override {
+        return std::atomic_load_explicit(&top_, std::memory_order_acquire);
+    }
+
+    // Change published depth at runtime
+    void set_top_depth(std::size_t d) noexcept { top_depth_ = d; }
+    
+    // Identity
+    std::size_t top_depth() const noexcept { return top_depth_; }
+    const std::string& venue() const override     { return venue_; }
+    const std::string& canonical() const override { return canonical_; }
+
+    // Access to Book
+    Book& book() override { return book_; }
+    const Book& book() const override { return book_; }
 
 private:
+    static std::int64_t now_ns() {
+        using namespace std::chrono;
+        return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+    }
+
+    // Capture and publish a fresh TopSnapshot (immutable)
+    void publish_top(std::size_t depth) {
+        TopSnapshot tmp;
+        tmp.venue  = venue_;
+        tmp.symbol = canonical_;
+        tmp.ts_ns  = now_ns();
+        tmp.bids   = book_.top_bids(depth);
+        tmp.asks   = book_.top_asks(depth);
+
+        // construct the shared_ptr holding a const TopSnapshot
+        auto snap = std::make_shared<const TopSnapshot>(std::move(tmp));
+        std::atomic_store_explicit(&top_, std::move(snap), std::memory_order_release);
+    }
+
     void consume_loop() {
         ParserT parser;
         std::vector<BookEvent> evs;
         std::string raw;
+
+        publish_top(top_depth_); // initial empty snapshot
 
         while (running_.load(std::memory_order_relaxed)) {
             if (!queue_.try_pop(raw)) {
@@ -99,6 +138,7 @@ private:
             // parser should parse full events; no depth limit here
             if (parser.parse(raw, evs)) {
                 book_.apply_many(evs);
+                publish_top(top_depth_); // publish after every applied batch
             }
         }
 
@@ -107,6 +147,7 @@ private:
             evs.clear();
             if (parser.parse(raw, evs)) {
                 book_.apply_many(evs);
+                publish_top(top_depth_);
             }
         }
     }
@@ -122,6 +163,10 @@ private:
     std::thread ws_thread_;
     std::thread consumer_;
     std::atomic<bool> running_;
+
+    // Published Top-N view (immutable via shared_ptr)
+    std::shared_ptr<const TopSnapshot> top_{nullptr};
+    std::size_t top_depth_; // requested published depth
 
     Book book_;
 };
