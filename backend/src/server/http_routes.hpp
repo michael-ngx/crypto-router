@@ -1,13 +1,12 @@
 #pragma once
+#include <boost/url.hpp>
 #include <boost/beast/http.hpp>
-#include <sstream>
-#include <string>
 #include <string_view>
-#include <cstdlib>
 #include "util/json_encode.hpp"
 #include "pipeline/master_feed.hpp"
 
-namespace http = boost::beast::http;
+namespace http  = boost::beast::http;
+namespace urls  = boost::urls;
 
 inline void handle_request(UIMasterFeed& ui,
                            const http::request<http::string_body>& req,
@@ -15,8 +14,22 @@ inline void handle_request(UIMasterFeed& ui,
 {
     res.set(http::field::server, "md-router/0.1");
 
+    // Parse the target as an origin-form URL
+    std::string_view target{req.target().data(), req.target().size()};
+    auto parsed_result = urls::parse_origin_form(target);
+    if (!parsed_result) {
+        res.result(http::status::bad_request);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"bad request"})";
+        return;
+    }
+
+    urls::url_view url = *parsed_result;
+    // url.path() => "/api/book"
+    // url.params() => iterable view of query parameters
+
     // /api/health
-    if (req.method() == http::verb::get && req.target() == "/api/health") {
+    if (req.method() == http::verb::get && url.path() == "/api/health") {
         res.result(http::status::ok);
         res.set(http::field::content_type, "application/json");
         res.body() = R"({"status":"ok"})";
@@ -24,28 +37,17 @@ inline void handle_request(UIMasterFeed& ui,
     }
 
     // /api/book?depth=10
-    std::string target = std::string(req.target());
-    if (target.rfind("/api/book", 0) == 0) {
-        std::size_t depth  = 10;
-        auto qpos = target.find('?');
-        if (qpos != std::string::npos) {
-            auto qs = target.substr(qpos+1);
-            std::size_t pos=0;
-            while (pos < qs.size()) {
-                auto amp = qs.find('&', pos);
-                std::string kv = qs.substr(pos, amp==std::string::npos ? std::string::npos : amp-pos);
-                auto eq = kv.find('=');
-                if (eq != std::string::npos) {
-                    auto key = kv.substr(0, eq);
-                    auto val = kv.substr(eq+1);
-                    if (key == "depth") {
-                        char* end=nullptr;
-                        long d = std::strtol(val.c_str(), &end, 10);
-                        if (end && *end=='\0' && d>0 && d<10000) depth = static_cast<std::size_t>(d);
-                    }
+    if (req.method() == http::verb::get && url.path() == "/api/book") {
+        std::size_t depth = MAX_TOP_DEPTH;
+
+        for (auto const& p : url.params()) {
+            try {
+                std::size_t d = std::stoul(std::string(p.value));
+                if (d > 0 && d <= MAX_TOP_DEPTH) {
+                    depth = d;
                 }
-                if (amp == std::string::npos) break;
-                pos = amp+1;
+            } catch (...) {
+                // ignore invalid input
             }
         }
 
@@ -57,11 +59,11 @@ inline void handle_request(UIMasterFeed& ui,
         os << "\"bids\":"; json_pair_array(os, snap.bids); os << ",";
         os << "\"asks\":"; json_pair_array(os, snap.asks); os << ",";
         os << "\"per_venue\":{";
-        bool first=true;
+        bool first = true;
         for (const auto& kv : snap.per_venue) {
             if (!kv.second) continue;
             if (!first) os << ",";
-            first=false;
+            first = false;
             os << "\"" << json_escape(kv.first) << "\":{";
             os << "\"venue\":\"" << json_escape(kv.second->venue) << "\",";
             os << "\"symbol\":\"" << json_escape(kv.second->symbol) << "\",";

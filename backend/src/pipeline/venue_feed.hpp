@@ -23,6 +23,9 @@ enum class Backpressure {
     SignalResync  // set a flag for re-snapshot
 };
 
+// Maximum depth of top-N snapshots to publish
+constexpr std::size_t MAX_TOP_DEPTH = 50;
+
 // VenueFeed is parameterized by concrete Ws type and concrete Parser type.
 // Each VenueFeed owns:
 //  - a WS connector (producer thread lives in ws_thread_)
@@ -35,7 +38,7 @@ public:
     VenueFeed(std::string venue_name,
               std::string canonical_symbol,
               Backpressure bp = Backpressure::DropOldest,
-              std::size_t top_depth = 10)
+              std::size_t top_depth = MAX_TOP_DEPTH)
     : venue_(std::move(venue_name))
     , canonical_(std::move(canonical_symbol))
     , backpressure_(bp)
@@ -89,12 +92,8 @@ public:
     std::shared_ptr<const TopSnapshot> load_top() const noexcept override {
         return std::atomic_load_explicit(&top_, std::memory_order_acquire);
     }
-
-    // Change published depth at runtime
-    void set_top_depth(std::size_t d) noexcept { top_depth_ = d; }
     
     // Identity
-    std::size_t top_depth() const noexcept { return top_depth_; }
     const std::string& venue() const override     { return venue_; }
     const std::string& canonical() const override { return canonical_; }
 

@@ -22,8 +22,8 @@ int main() {
     using KrFeed = VenueFeed<KrakenWs,  KrakenBookParser>;
 
     const std::string canonical = "BTC-USD";
-    auto cb = std::make_shared<CbFeed>("coinbase", canonical, Backpressure::DropOldest, /*top_depth*/10);
-    auto kr = std::make_shared<KrFeed>("kraken",  canonical, Backpressure::DropOldest, /*top_depth*/10);
+    auto cb = std::make_shared<CbFeed>("coinbase", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
+    auto kr = std::make_shared<KrFeed>("kraken",  canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
 
     cb->start_ws(SymbolCodec::to_venue("coinbase", canonical), 443);
     kr->start_ws(SymbolCodec::to_venue("kraken",  canonical), 443);
@@ -61,7 +61,11 @@ clang++ -std=c++20 -O3 -Wall -Wextra \
   src/md/symbol_codec.cpp \
   src/pipeline/master_feed.cpp \
   src/server/server_main.cpp \
-  -I src -I"$SIMDJSON_PREFIX/include" -I"$BOOST_PREFIX/include" -I"$OPENSSL_PREFIX/include" \
+  -I src \
+  -I"$SIMDJSON_PREFIX/include" \
+  -I"$BOOST_PREFIX/include" \
+  -L"$BOOST_PREFIX/lib" -lboost_url \
+  -I"$OPENSSL_PREFIX/include" \
   -L"$SIMDJSON_PREFIX/lib" -lsimdjson \
   -L"$OPENSSL_PREFIX/lib" -lssl -lcrypto \
   -Wl,-rpath,"$SIMDJSON_PREFIX/lib" \
