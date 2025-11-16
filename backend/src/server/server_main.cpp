@@ -52,9 +52,11 @@ int main() {
 }
 
 /*
+cd backend
 BOOST_PREFIX=$(brew --prefix boost)
 OPENSSL_PREFIX=$(brew --prefix openssl)
 SIMDJSON_PREFIX=$(brew --prefix simdjson)
+mkdir -p build
 
 clang++ -std=c++20 -O3 -Wall -Wextra \
   src/ws/ws_coinbase.cpp src/ws/ws_kraken.cpp \
@@ -71,5 +73,5 @@ clang++ -std=c++20 -O3 -Wall -Wextra \
   -Wl,-rpath,"$SIMDJSON_PREFIX/lib" \
   -Wl,-rpath,"$OPENSSL_PREFIX/lib" \
   -DBOOST_ERROR_CODE_HEADER_ONLY \
-  -o build/md_server
+  -o build/server
 */
