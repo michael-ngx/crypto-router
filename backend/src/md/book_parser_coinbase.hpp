@@ -53,7 +53,7 @@ public:
 
             if (type_sv == "snapshot") {
                 BookSnapshot snap;
-                snap.venue  = "coinbase";
+                snap.venue  = "Coinbase";
                 snap.symbol = canonical;
                 snap.ts_ns  = now_ns;
 
@@ -67,7 +67,7 @@ public:
                     if (o["new_quantity"].get(qty_sv)) continue; // usually strings
 
                     BookDelta d;
-                    d.venue  = "coinbase";
+                    d.venue  = "Coinbase";
                     d.symbol = snap.symbol;
                     d.side   = (side_sv == "bid") ? BookSide::Bid : BookSide::Ask;
                     d.price  = fast_atof(px_sv);
@@ -88,7 +88,7 @@ public:
                     if (o["new_quantity"].get(qty_sv)) continue;
 
                     BookDelta d;
-                    d.venue  = "coinbase";
+                    d.venue  = "Coinbase";
                     d.symbol = canonical;
                     d.side   = (side_sv == "bid") ? BookSide::Bid : BookSide::Ask;
                     d.price  = fast_atof(px_sv);

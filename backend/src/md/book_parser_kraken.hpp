@@ -56,7 +56,7 @@ public:
 
             if (type_sv == "snapshot") {
                 BookSnapshot snap;
-                snap.venue  = "kraken";
+                snap.venue  = "Kraken";
                 snap.symbol = canonical;
                 snap.ts_ns  = now_ns;
 
@@ -102,7 +102,7 @@ private:
             if (level["qty"].get(qty)) continue;
 
             BookDelta d;
-            d.venue  = "kraken";
+            d.venue  = "Kraken";
             d.symbol = canonical;
             d.side   = side;
             d.price  = px;
@@ -133,7 +133,7 @@ private:
             if (level["qty"].get(qty)) continue;
 
             BookDelta d;
-            d.venue  = "kraken";
+            d.venue  = "Kraken";
             d.symbol = canonical;
             d.side   = side;
             d.price  = px;

@@ -8,7 +8,7 @@ struct IVenueFeed {
     virtual void start_ws(const std::string& venue_symbol, unsigned short port = 443) = 0;
     virtual void stop() = 0;
 
-    virtual const std::string& venue() const = 0;     // "coinbase", "kraken"
+    virtual const std::string& venue() const = 0;     // "Coinbase", "Kraken"
     virtual const std::string& canonical() const = 0; // "BTC-USD"
 
     virtual Book& book() = 0;

@@ -25,8 +25,6 @@ inline void handle_request(UIMasterFeed& ui,
     }
 
     urls::url_view url = *parsed_result;
-    // url.path() => "/api/book"
-    // url.params() => iterable view of query parameters
 
     // /api/health
     if (req.method() == http::verb::get && url.path() == "/api/health") {
@@ -41,13 +39,15 @@ inline void handle_request(UIMasterFeed& ui,
         std::size_t depth = MAX_TOP_DEPTH;
 
         for (auto const& p : url.params()) {
-            try {
-                std::size_t d = std::stoul(std::string(p.value));
-                if (d > 0 && d <= MAX_TOP_DEPTH) {
-                    depth = d;
+            if (p.key == "depth") {
+                try {
+                    std::size_t d = std::stoul(std::string(p.value));
+                    if (d > 0 && d <= MAX_TOP_DEPTH) {
+                        depth = d;
+                    }
+                } catch (...) {
+                    // ignore invalid input
                 }
-            } catch (...) {
-                // ignore invalid input
             }
         }
 
@@ -56,24 +56,32 @@ inline void handle_request(UIMasterFeed& ui,
         std::ostringstream os;
         os << "{";
         os << "\"symbol\":\"" << json_escape(snap.symbol) << "\",";
-        os << "\"bids\":"; json_pair_array(os, snap.bids); os << ",";
-        os << "\"asks\":"; json_pair_array(os, snap.asks); os << ",";
+
+        // Consolidated ladders with venue information for UI
+        os << "\"bids\":"; json_ladder_array(os, snap.bids); os << ",";
+        os << "\"asks\":"; json_ladder_array(os, snap.asks); os << ",";
+
+        // Per-venue snapshots (still useful for debugging / side panels)
         os << "\"per_venue\":{";
         bool first = true;
         for (const auto& kv : snap.per_venue) {
-            if (!kv.second) continue;
+            const auto& venue_name = kv.first;
+            const auto& sp = kv.second;
+            if (!sp) continue;
+
             if (!first) os << ",";
             first = false;
-            os << "\"" << json_escape(kv.first) << "\":{";
-            os << "\"venue\":\"" << json_escape(kv.second->venue) << "\",";
-            os << "\"symbol\":\"" << json_escape(kv.second->symbol) << "\",";
-            os << "\"ts_ns\":" << kv.second->ts_ns << ",";
-            os << "\"bids\":"; json_pair_array(os, kv.second->bids); os << ",";
-            os << "\"asks\":"; json_pair_array(os, kv.second->asks);
+
+            os << "\"" << json_escape(venue_name) << "\":{";
+            os << "\"venue\":\""  << json_escape(sp->venue)  << "\",";
+            os << "\"symbol\":\"" << json_escape(sp->symbol) << "\",";
+            os << "\"ts_ns\":"    << sp->ts_ns << ",";
+            os << "\"bids\":"; json_pair_array(os, sp->bids); os << ",";
+            os << "\"asks\":"; json_pair_array(os, sp->asks);
             os << "}";
         }
-        os << "}";
-        os << "}";
+        os << "}"; // per_venue
+        os << "}"; // root object
 
         res.result(http::status::ok);
         res.set(http::field::content_type, "application/json");

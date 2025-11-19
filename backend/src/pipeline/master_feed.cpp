@@ -1,5 +1,4 @@
 #include "master_feed.hpp"
-#include <queue>
 #include <algorithm>
 
 void UIMasterFeed::add_feed(std::shared_ptr<IVenueFeed> feed) {
@@ -12,100 +11,11 @@ void UIMasterFeed::add_feed(std::shared_ptr<IVenueFeed> feed) {
     feeds_.push_back(std::move(feed));
 }
 
-static void aggregate_side_desc( // for bids: highest first
-    std::vector<std::vector<std::pair<double,double>>>& ladders,
-    std::size_t depth,
-    std::vector<std::pair<double,double>>& out)
-{
-    struct Node { double px; double sz; std::size_t i; std::size_t j; };
-    auto cmp = [](const Node& a, const Node& b){ return a.px < b.px; }; // max-heap by price
-    std::priority_queue<Node, std::vector<Node>, decltype(cmp)> pq(cmp);
-
-    for (std::size_t i = 0; i < ladders.size(); ++i) {
-        if (!ladders[i].empty()) {
-            pq.push(Node{ladders[i][0].first, ladders[i][0].second, i, 0});
-        }
-    }
-
-    out.clear();
-    out.reserve(depth);
-
-    double cur_px = 0.0;
-    double acc_sz = 0.0;
-    bool have = false;
-
-    while (!pq.empty() && out.size() < depth) {
-        auto n = pq.top(); pq.pop();
-
-        if (!have) {
-            cur_px = n.px; acc_sz = n.sz; have = true;
-        } else if (n.px == cur_px) {
-            acc_sz += n.sz;
-        } else {
-            out.emplace_back(cur_px, acc_sz);
-            if (out.size() >= depth) break;
-            cur_px = n.px; acc_sz = n.sz;
-        }
-
-        if (n.j + 1 < ladders[n.i].size()) {
-            auto& nxt = ladders[n.i][n.j + 1];
-            pq.push(Node{nxt.first, nxt.second, n.i, n.j + 1});
-        }
-    }
-    if (have && out.size() < depth) {
-        out.emplace_back(cur_px, acc_sz);
-    }
-}
-
-static void aggregate_side_asc( // for asks: lowest first
-    std::vector<std::vector<std::pair<double,double>>>& ladders,
-    std::size_t depth,
-    std::vector<std::pair<double,double>>& out)
-{
-    struct Node { double px; double sz; std::size_t i; std::size_t j; };
-    auto cmp = [](const Node& a, const Node& b){ return a.px > b.px; }; // min-heap by price
-    std::priority_queue<Node, std::vector<Node>, decltype(cmp)> pq(cmp);
-
-    for (std::size_t i = 0; i < ladders.size(); ++i) {
-        if (!ladders[i].empty()) {
-            pq.push(Node{ladders[i][0].first, ladders[i][0].second, i, 0});
-        }
-    }
-
-    out.clear();
-    out.reserve(depth);
-
-    double cur_px = 0.0;
-    double acc_sz = 0.0;
-    bool have = false;
-
-    while (!pq.empty() && out.size() < depth) {
-        auto n = pq.top(); pq.pop();
-
-        if (!have) {
-            cur_px = n.px; acc_sz = n.sz; have = true;
-        } else if (n.px == cur_px) {
-            acc_sz += n.sz;
-        } else {
-            out.emplace_back(cur_px, acc_sz);
-            if (out.size() >= depth) break;
-            cur_px = n.px; acc_sz = n.sz;
-        }
-
-        if (n.j + 1 < ladders[n.i].size()) {
-            auto& nxt = ladders[n.i][n.j + 1];
-            pq.push(Node{nxt.first, nxt.second, n.i, n.j + 1});
-        }
-    }
-    if (have && out.size() < depth) {
-        out.emplace_back(cur_px, acc_sz);
-    }
-}
-
 UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
     UIConsolidated out;
     out.symbol = canonical_;
 
+    // Take a snapshot of all venues.
     std::vector<std::shared_ptr<const TopSnapshot>> snaps;
     {
         std::lock_guard<std::mutex> lk(m_);
@@ -115,25 +25,59 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         }
     }
 
-    // Build per-venue copies (optional for UI side-panels)
+    // Build per-venue map.
     for (auto& sp : snaps) {
         if (!sp) continue;
         out.per_venue.emplace(sp->venue, sp);
     }
 
-    // Collect side ladders
-    std::vector<std::vector<std::pair<double,double>>> all_bids;
-    std::vector<std::vector<std::pair<double,double>>> all_asks;
-    all_bids.reserve(snaps.size());
-    all_asks.reserve(snaps.size());
+    // Flatten all per-venue ladders into a single list with venue info.
+    std::vector<UILadderLevel> all_bids;
+    std::vector<UILadderLevel> all_asks;
+    all_bids.reserve(snaps.size() * depth);
+    all_asks.reserve(snaps.size() * depth);
+
     for (auto& sp : snaps) {
         if (!sp) continue;
-        all_bids.push_back(sp->bids);
-        all_asks.push_back(sp->asks);
+
+        for (const auto& [px, sz] : sp->bids) {
+            all_bids.push_back(UILadderLevel{sp->venue, px, sz});
+        }
+        for (const auto& [px, sz] : sp->asks) {
+            all_asks.push_back(UILadderLevel{sp->venue, px, sz});
+        }
     }
 
-    aggregate_side_desc(all_bids, depth, out.bids);
-    aggregate_side_asc(all_asks, depth, out.asks);
+    // Sort and trim to desired depth.
+    auto sort_and_trim = [depth](auto& v, bool bids_side) {
+        if (v.empty()) return;
+
+        if (bids_side) {
+            // Bids: highest price first; tie-breaker by larger size.
+            std::sort(v.begin(), v.end(),
+                      [](const UILadderLevel& a, const UILadderLevel& b) {
+                          if (a.price != b.price) return a.price > b.price;
+                          return a.size > b.size;
+                      });
+        } else {
+            // Asks: lowest price first; tie-breaker by larger size.
+            std::sort(v.begin(), v.end(),
+                      [](const UILadderLevel& a, const UILadderLevel& b) {
+                          if (a.price != b.price) return a.price < b.price;
+                          return a.size > b.size;
+                      });
+        }
+
+        if (v.size() > depth) {
+            v.resize(depth);
+        }
+    };
+
+    sort_and_trim(all_bids, true);
+    sort_and_trim(all_asks, false);
+
+    out.bids = std::move(all_bids);
+    out.asks = std::move(all_asks);
 
     return out;
 }

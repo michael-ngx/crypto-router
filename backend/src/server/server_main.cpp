@@ -22,11 +22,11 @@ int main() {
     using KrFeed = VenueFeed<KrakenWs,  KrakenBookParser>;
 
     const std::string canonical = "BTC-USD";
-    auto cb = std::make_shared<CbFeed>("coinbase", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
-    auto kr = std::make_shared<KrFeed>("kraken",  canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
+    auto cb = std::make_shared<CbFeed>("Coinbase", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
+    auto kr = std::make_shared<KrFeed>("Kraken",  canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
 
-    cb->start_ws(SymbolCodec::to_venue("coinbase", canonical), 443);
-    kr->start_ws(SymbolCodec::to_venue("kraken",  canonical), 443);
+    cb->start_ws(SymbolCodec::to_venue("Coinbase", canonical), 443);
+    kr->start_ws(SymbolCodec::to_venue("Kraken",  canonical), 443);
 
 
     // Create UIMasterFeed and register venue feeds

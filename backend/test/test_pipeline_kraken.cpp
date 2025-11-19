@@ -44,7 +44,7 @@ int main() {
     const std::string kk_sym = SymbolCodec::to_venue("kraken", canonical);
 
     // Build the per-venue pipeline (full-depth book)
-    KkFeed feed{"kraken", canonical, Backpressure::DropOldest};
+    KkFeed feed{"Kraken", canonical, Backpressure::DropOldest};
 
     // Start WS + consumer
     feed.start_ws(kk_sym, /*port*/443);

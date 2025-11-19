@@ -4,7 +4,10 @@ static std::string canonize(std::string s) { return s; } // TODO: extend later
 
 std::string SymbolCodec::to_venue(const std::string &venue, const std::string &c)
 {
-    if (venue == "kraken")
+    std::string venue_lc = venue;
+    for (auto &ch : venue_lc) ch = tolower(ch);
+
+    if (venue_lc == "kraken")
     {
         std::string v = c;
         for (auto &ch : v)
@@ -12,7 +15,7 @@ std::string SymbolCodec::to_venue(const std::string &venue, const std::string &c
                 ch = '/';
         return v;
     }
-    else if (venue == "coinbase")
+    else if (venue_lc == "coinbase")
     {
         return c;
     }
@@ -21,7 +24,10 @@ std::string SymbolCodec::to_venue(const std::string &venue, const std::string &c
 
 std::string SymbolCodec::to_canonical(const std::string &venue, const std::string &v)
 {
-    if (venue == "kraken")
+    std::string venue_lc = venue;
+    for (auto &ch : venue_lc) ch = tolower(ch);
+
+    if (venue_lc == "kraken")
     {
         std::string c = v;
         for (auto &ch : c)
@@ -29,7 +35,7 @@ std::string SymbolCodec::to_canonical(const std::string &venue, const std::strin
                 ch = '-';
         return canonize(c);
     }
-    else if (venue == "coinbase")
+    else if (venue_lc == "coinbase")
     {
         return canonize(v);
     }

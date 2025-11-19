@@ -17,7 +17,7 @@ enum class BookOp : uint8_t
 
 struct BookDelta
 {
-    std::string venue;  // "coinbase", "kraken"
+    std::string venue;  // "Coinbase", "Kraken"
     std::string symbol; // canonical "BTC-USD"
     BookSide side;
     double price{0};

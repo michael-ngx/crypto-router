@@ -6,7 +6,7 @@ export default function HomePage() {
           Crypto Router
         </h1>
         <p className="mt-2 text-sm text-slate-400">
-          Experimental frontend for real-time routing, execution, and post-trade analytics.
+          Real-time routing, execution, and post-trade analytics.
         </p>
       </div>
     </div>

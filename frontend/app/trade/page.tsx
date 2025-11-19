@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ConsolidatedOrderBook,
+  type BookResponse,
+} from "../../components/ConsolidatedOrderBook";
 
-type BookResponse = unknown; // later you can replace this with a proper type
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+// How long we allow the book to go without a successful update
+// before we consider it "stale" and show the loading indicator again.
+const STALE_MS = 5000;
 
 export default function TradePage() {
   const [selectedPair, setSelectedPair] = useState("BTC-USD");
@@ -12,16 +19,34 @@ export default function TradePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Track time of last successful book update (with at least one level)
+  const lastUpdateRef = useRef<number | null>(null);
+
   useEffect(() => {
     let isCancelled = false;
     let timerId: number | null = null;
     let pollSeq = 0;
 
+    // New symbol or first mount: treat as initial load, no data yet.
+    setIsLoading(true);
+    setError(null);
+    setBookData(null);
+    lastUpdateRef.current = null;
+
     const fetchBook = async () => {
       if (isCancelled) return;
 
-      setIsLoading(true);
-      setError(null);
+      const now = Date.now();
+      const lastUpdate = lastUpdateRef.current;
+
+      // If we had data before and it's stale, go back to a "loading" state:
+      // show Updating..., hide table, no error.
+      if (lastUpdate !== null && now - lastUpdate > STALE_MS) {
+        setIsLoading(true);
+        setBookData(null);
+        setError(null);
+      }
+
       const currentSeq = ++pollSeq;
 
       try {
@@ -34,20 +59,34 @@ export default function TradePage() {
           throw new Error(`HTTP ${resp.status}`);
         }
 
-        // If you are still debugging JSON issues, you can switch to resp.text()
         const data = (await resp.json()) as BookResponse;
 
-        if (!isCancelled && currentSeq === pollSeq) {
+        const hasLevels =
+          (data.bids && data.bids.length > 0) ||
+          (data.asks && data.asks.length > 0);
+
+        if (!isCancelled && currentSeq === pollSeq && hasLevels) {
+          // Valid snapshot: enter READY state
           setBookData(data);
+          setIsLoading(false);
+          setError(null);
+          lastUpdateRef.current = Date.now();
         }
+        // If !hasLevels: treat as "no new valid data".
+        // We keep whatever state we were already in (loading or ready),
+        // and let stale logic handle it if it goes too long.
       } catch (err: any) {
         if (!isCancelled) {
+          // Error state: we keep polling but show "Updating..." + error,
+          // and invalidate the table.
+          setIsLoading(true);
+          setBookData(null);
           setError(err?.message ?? "Failed to fetch book");
+          // lastUpdateRef.current remains unchanged: tracks last success.
         }
       } finally {
         if (!isCancelled) {
-          setIsLoading(false);
-          timerId = window.setTimeout(fetchBook, 1000);
+          timerId = window.setTimeout(fetchBook, 1000); // Re-run after 1s
         }
       }
     };
@@ -68,8 +107,11 @@ export default function TradePage() {
         <div>
           <h2 className="text-xl font-semibold text-slate-50">Trade</h2>
           <p className="text-xs text-slate-400">
-            Experimental UI calling the router backend book API every second.
+            Consolidated order book across multiple exchanges
           </p>
+          {isLoading && (
+            <p className="mt-1 text-[11px] text-slate-500">Updating…</p>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -80,31 +122,21 @@ export default function TradePage() {
             className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
           >
             <option value="BTC-USD">BTC / USD</option>
+            {/* TODO: dynamically add available pairs here */}
           </select>
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm text-slate-100">
-            Raw book API response (depth = 10)
-          </span>
-          <span className="text-xs text-slate-400">
-            Polling every 1 second
-            {isLoading ? " · loading…" : ""}
-          </span>
+      {error && (
+        <div className="rounded-lg border border-red-500/40 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+          Error fetching book: {error}
         </div>
+      )}
 
-        {error && (
-          <div className="mb-3 text-xs text-red-300">Error: {error}</div>
-        )}
-
-        <pre className="m-0 whitespace-pre-wrap break-words text-xs font-mono text-slate-100">
-          {bookData
-            ? JSON.stringify(bookData, null, 2)
-            : "No data yet. Waiting for first response…"}
-        </pre>
-      </section>
+      {/* Enforce mutual exclusivity: table only when we have valid data */}
+      {bookData && !isLoading ? (
+        <ConsolidatedOrderBook book={bookData} lastUpdated={lastUpdateRef.current} />
+      ) : null}
     </div>
   );
 }

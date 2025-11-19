@@ -42,10 +42,10 @@ static void print_snapshot(const Book& b, std::size_t n = 10) {
 
 int main() {
     const std::string canonical = "BTC-USD";
-    const std::string cb_sym = SymbolCodec::to_venue("coinbase", canonical);
+    const std::string cb_sym = SymbolCodec::to_venue("Coinbase", canonical);
 
     // Build the per-venue pipeline (full-depth book)
-    CbFeed feed{"coinbase", canonical, Backpressure::DropOldest};
+    CbFeed feed{"Coinbase", canonical, Backpressure::DropOldest};
 
     // Start WS + consumer
     feed.start_ws(cb_sym, /*port*/443);

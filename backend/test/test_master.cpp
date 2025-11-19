@@ -16,12 +16,12 @@ int main() {
     using CbFeed = VenueFeed<CoinbaseWs, CoinbaseBookParser>;
     using KrFeed = VenueFeed<KrakenWs,  KrakenBookParser >;
 
-    auto cb = std::make_shared<CbFeed>("coinbase", canonical, Backpressure::DropOldest, /*top_depth*/10);
-    auto kr = std::make_shared<KrFeed>("kraken",  canonical, Backpressure::DropOldest, /*top_depth*/10);
+    auto cb = std::make_shared<CbFeed>("Coinbase", canonical, Backpressure::DropOldest, /*top_depth*/10);
+    auto kr = std::make_shared<KrFeed>("Kraken",  canonical, Backpressure::DropOldest, /*top_depth*/10);
 
     // Start WS
-    cb->start_ws(SymbolCodec::to_venue("coinbase", canonical), 443);
-    kr->start_ws(SymbolCodec::to_venue("kraken",  canonical), 443);
+    cb->start_ws(SymbolCodec::to_venue("Coinbase", canonical), 443);
+    kr->start_ws(SymbolCodec::to_venue("Kraken",  canonical), 443);
 
     // Master UI
     UIMasterFeed ui(canonical);
