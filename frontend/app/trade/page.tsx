@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   ConsolidatedOrderBook,
   type BookResponse,
@@ -14,6 +16,8 @@ const API_BASE_URL =
 const STALE_MS = 5000;
 
 export default function TradePage() {
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const router = useRouter();
   const [selectedPair, setSelectedPair] = useState("BTC-USD");
   const [bookData, setBookData] = useState<BookResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -22,7 +26,19 @@ export default function TradePage() {
   // Track time of last successful book update (with at least one level)
   const lastUpdateRef = useRef<number | null>(null);
 
+  // Redirect to home if not authenticated
   useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push("/");
+    }
+  }, [isAuthenticated, authLoading, router]);
+
+  // Fetch order book data - must be called before any early returns
+  useEffect(() => {
+    // Don't fetch if not authenticated or still loading
+    if (authLoading || !isAuthenticated) {
+      return;
+    }
     let isCancelled = false;
     let timerId: number | null = null;
     let pollSeq = 0;
@@ -99,7 +115,15 @@ export default function TradePage() {
         clearTimeout(timerId);
       }
     };
-  }, [selectedPair]);
+  }, [selectedPair, authLoading, isAuthenticated]);
+
+  if (authLoading || !isAuthenticated) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
+        <div className="text-slate-400">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
