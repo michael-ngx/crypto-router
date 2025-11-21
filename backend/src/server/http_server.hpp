@@ -52,7 +52,7 @@ private:
                     // CORS
                     res->set(http::field::access_control_allow_origin, "*");
                     res->set(http::field::access_control_allow_headers, "*");
-                    res->set(http::field::access_control_allow_methods, "GET, OPTIONS");
+                    res->set(http::field::access_control_allow_methods, "GET, POST, PATCH, OPTIONS");
                     if (req->method() == http::verb::options) {
                         res->result(http::status::ok);
                         res->set(http::field::content_type, "text/plain");

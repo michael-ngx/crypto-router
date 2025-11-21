@@ -100,13 +100,15 @@ int main() {
     
     // Initialize Supabase connection and create tables
     std::unique_ptr<IOrderStore> order_store;
+    std::string db_conn_str;
     try {
-        std::string conn_str = get_supabase_connection_string();
-        order_store = make_supabase_store(conn_str);
+        db_conn_str = get_supabase_connection_string();
+        order_store = make_supabase_store(db_conn_str);
         std::cout << "Database connected successfully" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Warning: Failed to initialize Supabase: " << e.what() << std::endl;
         std::cerr << "Server will continue without database functionality." << std::endl;
+        db_conn_str = ""; // Empty string indicates no database
     }
     // Create VenueFeeds for coinbase and kraken BTC-USD
     using CbFeed = VenueFeed<CoinbaseWs, CoinbaseBookParser>;
@@ -130,7 +132,7 @@ int main() {
     boost::asio::io_context ioc{1};
     tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(ui, req, res);
+      handle_request(ui, db_conn_str, req, res);
     }};
     server.run();
 

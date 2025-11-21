@@ -50,17 +50,19 @@ public:
         )";
 
         try {
-            pqxx::result result = txn.exec_params(
+            pqxx::result result = txn.exec(
                 query,
-                o.id,
-                o.symbol,
-                static_cast<int>(o.side),
-                static_cast<int>(o.type),
-                o.price,
-                o.qty,
-                static_cast<int>(o.status),
-                o.ts_ns,
-                o.user_id.empty() ? pqxx::zview(nullptr) : o.user_id
+                pqxx::params(
+                    o.id,
+                    o.symbol,
+                    static_cast<int>(o.side),
+                    static_cast<int>(o.type),
+                    o.price,
+                    o.qty,
+                    static_cast<int>(o.status),
+                    o.ts_ns,
+                    o.user_id.empty() ? pqxx::zview(nullptr) : o.user_id
+                )
             );
             txn.commit();
             return result[0][0].as<std::string>();
@@ -80,7 +82,7 @@ public:
         )";
 
         try {
-            pqxx::result result = txn.exec_params(query, id);
+            pqxx::result result = txn.exec(query, pqxx::params(id));
             if (result.empty()) {
                 return std::nullopt;
             }
@@ -153,12 +155,14 @@ public:
         )";
 
         try {
-            pqxx::result result = txn.exec_params(
+            pqxx::result result = txn.exec(
                 query,
-                static_cast<int>(OrderStatus::CANCELED),
-                id,
-                static_cast<int>(OrderStatus::NEW),
-                static_cast<int>(OrderStatus::PARTIALLY_FILLED)
+                pqxx::params(
+                    static_cast<int>(OrderStatus::CANCELED),
+                    id,
+                    static_cast<int>(OrderStatus::NEW),
+                    static_cast<int>(OrderStatus::PARTIALLY_FILLED)
+                )
             );
             txn.commit();
             return !result.empty();
@@ -179,10 +183,9 @@ public:
         )";
 
         try {
-            pqxx::result result = txn.exec_params(
+            pqxx::result result = txn.exec(
                 query,
-                static_cast<int>(status),
-                id
+                pqxx::params(static_cast<int>(status), id)
             );
             txn.commit();
             return !result.empty();
@@ -261,7 +264,8 @@ private:
                     
                     if (!statement.empty()) {
                         try {
-                            ntxn.exec0(statement);  // Use exec0 for DDL (no result expected)
+                            auto result = ntxn.exec(statement);  // Use exec() for DDL
+                            (void)result;  // Result not needed for DDL statements
                         } catch (const pqxx::sql_error& e) {
                             // Ignore "already exists" errors (IF NOT EXISTS handles this)
                             std::string err_msg = e.what();

@@ -19,8 +19,11 @@ CREATE TABLE IF NOT EXISTS public.users (
 CREATE TABLE IF NOT EXISTS public.orders (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  symbol VARCHAR(50) NOT NULL,
   side public.order_side NOT NULL,
   order_type public.order_type NOT NULL,
+  quantity DECIMAL(20,8) NOT NULL,
+  limit_price DECIMAL(20,8),
   average_fill_price DECIMAL(20,8),
   status public.order_status NOT NULL DEFAULT 'open',
   created_at TIMESTAMPTZ DEFAULT NOW(),
