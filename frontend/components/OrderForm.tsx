@@ -46,14 +46,18 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
         }
       }
 
-      const orderData = {
+      const orderData: any = {
         symbol,
-        side,
-        type: orderType,
+        side: side.toLowerCase(),
+        type: orderType.toLowerCase(),
         qty: qtyNum,
-        price: orderType === "LIMIT" ? parseFloat(price) : 0,
         user_id: user.user_id,
       };
+
+      // Only include price for limit orders
+      if (orderType === "LIMIT") {
+        orderData.price = parseFloat(price);
+      }
 
       const response = await fetch(`${API_BASE_URL}/api/orders`, {
         method: "POST",
@@ -89,26 +93,26 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-slate-200">Trading Pair</label>
+        <label className="text-sm text-slate-200">Trading pair</label>
         <input
           type="text"
           value={symbol}
           disabled
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-300"
+          className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-300"
         />
       </div>
 
       <div className="flex gap-4">
         <div className="flex-1">
-          <label className="text-sm font-medium text-slate-200">Side</label>
+          <label className="text-sm text-slate-200">Side</label>
           <div className="mt-1 flex gap-2">
             <button
               type="button"
               onClick={() => setSide("BUY")}
-              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
                 side === "BUY"
-                  ? "bg-green-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  ? "border-green-500/70 bg-green-500/20 text-slate-50"
+                  : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-slate-50"
               }`}
             >
               Buy
@@ -116,10 +120,10 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
             <button
               type="button"
               onClick={() => setSide("SELL")}
-              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
                 side === "SELL"
-                  ? "bg-red-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  ? "border-red-500/70 bg-red-500/20 text-slate-50"
+                  : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-slate-50"
               }`}
             >
               Sell
@@ -128,15 +132,15 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
         </div>
 
         <div className="flex-1">
-          <label className="text-sm font-medium text-slate-200">Order Type</label>
+          <label className="text-sm text-slate-200">Order type</label>
           <div className="mt-1 flex gap-2">
             <button
               type="button"
               onClick={() => setOrderType("MARKET")}
-              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
                 orderType === "MARKET"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  ? "border-blue-500/70 bg-blue-500/20 text-slate-50"
+                  : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-slate-50"
               }`}
             >
               Market
@@ -144,10 +148,10 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
             <button
               type="button"
               onClick={() => setOrderType("LIMIT")}
-              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
                 orderType === "LIMIT"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  ? "border-blue-500/70 bg-blue-500/20 text-slate-50"
+                  : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-slate-50"
               }`}
             >
               Limit
@@ -158,9 +162,7 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
 
       <div className="flex gap-4">
         <div className="flex-1">
-          <label className="text-sm font-medium text-slate-200">
-            Quantity
-          </label>
+          <label className="text-sm text-slate-200">Quantity</label>
           <input
             type="number"
             step="any"
@@ -168,16 +170,14 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
             value={qty}
             onChange={(e) => setQty(e.target.value)}
             required
-            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
+            className="mt-1 w-full rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
             placeholder="0.00"
           />
         </div>
 
         {orderType === "LIMIT" && (
           <div className="flex-1">
-            <label className="text-sm font-medium text-slate-200">
-              Price
-            </label>
+            <label className="text-sm text-slate-200">Price</label>
             <input
               type="number"
               step="any"
@@ -185,7 +185,7 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               required={orderType === "LIMIT"}
-              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
+              className="mt-1 w-full rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
               placeholder="0.00"
             />
           </div>
@@ -193,19 +193,19 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
       </div>
 
       {!isAuthenticated && (
-        <div className="rounded-lg border border-yellow-500/40 bg-yellow-950/40 px-3 py-2 text-sm text-yellow-200">
+        <div className="rounded-lg border border-yellow-500/40 bg-yellow-950/40 px-3 py-2 text-xs text-yellow-200">
           Please <a href="/login" className="underline">login</a> to place orders
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-500/40 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+        <div className="rounded-lg border border-red-500/40 bg-red-950/40 px-3 py-2 text-xs text-red-200">
           {error}
         </div>
       )}
 
       {success && (
-        <div className="rounded-lg border border-green-500/40 bg-green-950/40 px-3 py-2 text-sm text-green-200">
+        <div className="rounded-lg border border-green-500/40 bg-green-950/40 px-3 py-2 text-xs text-green-200">
           {success}
         </div>
       )}
@@ -213,11 +213,11 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
       <button
         type="submit"
         disabled={isSubmitting}
-        className={`rounded-lg px-4 py-2 font-medium text-white transition-colors ${
+        className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
           side === "BUY"
-            ? "bg-green-600 hover:bg-green-700"
-            : "bg-red-600 hover:bg-red-700"
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
+            ? "border-green-500/70 bg-green-500/20 text-slate-50 hover:bg-green-500/30"
+            : "border-red-500/70 bg-red-500/20 text-slate-50 hover:bg-red-500/30"
+        } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-opacity-20`}
       >
         {isSubmitting ? "Submitting..." : `${side} ${symbol.split("-")[0]}`}
       </button>

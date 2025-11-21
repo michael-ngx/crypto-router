@@ -7,6 +7,7 @@ import {
   ConsolidatedOrderBook,
   type BookResponse,
 } from "../../components/ConsolidatedOrderBook";
+import { OrderForm } from "../../components/OrderForm";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
@@ -161,6 +162,12 @@ export default function TradePage() {
       {bookData && !isLoading ? (
         <ConsolidatedOrderBook book={bookData} lastUpdated={lastUpdateRef.current} />
       ) : null}
+
+      {/* Order Form */}
+      <section className="rounded-lg border border-slate-700 bg-slate-900/50 p-6">
+        <h2 className="mb-4 text-lg font-semibold text-slate-50">Place Order</h2>
+        <OrderForm symbol={selectedPair} />
+      </section>
     </div>
   );
 }
