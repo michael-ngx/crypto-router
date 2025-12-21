@@ -6,8 +6,11 @@
 #include <optional>
 #include <algorithm>
 #include <sstream>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 #include "util/json_encode.hpp"
-#include "pipeline/master_feed.hpp"
+#include "ui/master_feed.hpp"
 #include "supabase/auth_utils.hpp"
 #include "order_book/storage.hpp"
 #include <simdjson.h>
@@ -15,6 +18,9 @@
 
 namespace http  = boost::beast::http;
 namespace urls  = boost::urls;
+
+// Master feed registry per canonical symbol
+using UIFeedRegistry = std::unordered_map<std::string, std::shared_ptr<UIMasterFeed>>;
 
 // Handle /api/auth/signup endpoint
 inline void handle_signup(const std::string& db_conn_str,
@@ -533,11 +539,12 @@ inline void handle_get_orders(const std::string& db_conn_str,
 }
 
 // Handle /api/book endpoint
-inline void handle_book(UIMasterFeed& ui,
+inline void handle_book(const UIFeedRegistry& feeds,
                         const urls::url_view& url,
                         http::response<http::string_body>& res)
 {
     std::size_t depth = MAX_TOP_DEPTH;
+    std::string symbol;
 
     for (auto const& p : url.params()) {
         if (p.key == "depth") {
@@ -549,10 +556,27 @@ inline void handle_book(UIMasterFeed& ui,
             } catch (...) {
                 // ignore invalid input
             }
+        } else if (p.key == "symbol") {
+            symbol = std::string(p.value);
         }
     }
 
-    UIConsolidated snap = ui.snapshot_consolidated(depth);
+    if (symbol.empty()) {
+        res.result(http::status::bad_request);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"symbol parameter required"})";
+        return;
+    }
+
+    auto it = feeds.find(symbol);
+    if (it == feeds.end() || !it->second) {
+        res.result(http::status::not_found);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"symbol not supported"})";
+        return;
+    }
+
+    UIConsolidated snap = it->second->snapshot_consolidated(depth);
 
     std::ostringstream os;
     os << "{";
@@ -589,7 +613,31 @@ inline void handle_book(UIMasterFeed& ui,
     res.body() = os.str();
 }
 
-inline void handle_request(UIMasterFeed& ui,
+// Handle /api/pairs endpoint
+inline void handle_pairs(const UIFeedRegistry& feeds,
+                         http::response<http::string_body>& res)
+{
+    std::vector<std::string> pairs;
+    pairs.reserve(feeds.size());
+    for (const auto& kv : feeds) {
+        pairs.push_back(kv.first);
+    }
+    std::sort(pairs.begin(), pairs.end());
+
+    std::ostringstream os;
+    os << "{\"pairs\":[";
+    for (std::size_t i = 0; i < pairs.size(); ++i) {
+        if (i > 0) os << ",";
+        os << "\"" << json_escape(pairs[i]) << "\"";
+    }
+    os << "]}";
+
+    res.result(http::status::ok);
+    res.set(http::field::content_type, "application/json");
+    res.body() = os.str();
+}
+
+inline void handle_request(const UIFeedRegistry& feeds,
                            const std::string& db_conn_str,
                            const http::request<http::string_body>& req,
                            http::response<http::string_body>& res)
@@ -616,9 +664,15 @@ inline void handle_request(UIMasterFeed& ui,
         return;
     }
 
-    // /api/book?depth=10
+    // /api/pairs
+    if (req.method() == http::verb::get && url.path() == "/api/pairs") {
+        handle_pairs(feeds, res);
+        return;
+    }
+
+    // /api/book?symbol=BTC-USD&depth=10
     if (req.method() == http::verb::get && url.path() == "/api/book") {
-        handle_book(ui, url, res);
+        handle_book(feeds, url, res);
         return;
     }
 

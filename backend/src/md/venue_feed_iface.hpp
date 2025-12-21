@@ -1,6 +1,7 @@
 #pragma once
+#include <memory>
 #include <string>
-#include "md/book.hpp"
+#include "book.hpp"
 #include "top_snapshot.hpp"
 
 struct IVenueFeed {

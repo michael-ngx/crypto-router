@@ -1,4 +1,4 @@
-#include "../src/ws/ws.hpp"
+#include "../src/venues/coinbase/ws.hpp"
 #include <iostream>
 #include <atomic>
 #include <thread>
@@ -24,7 +24,7 @@ OPENSSL_PREFIX=$(brew --prefix openssl)
 mkdir -p build
 
 clang++ -std=c++20 -O3 -Wall -Wextra \
-  src/ws/ws_coinbase.cpp test/test_ws_coinbase.cpp \
+  src/venues/coinbase/ws.cpp test/test_ws_coinbase.cpp \
   -I src -I"$BOOST_PREFIX/include" -I"$OPENSSL_PREFIX/include" \
   "$OPENSSL_PREFIX/lib/libssl.dylib" \
   "$OPENSSL_PREFIX/lib/libcrypto.dylib" \

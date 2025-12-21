@@ -1,4 +1,4 @@
-#include "../src/ws/ws.hpp"
+#include "../src/venues/kraken/ws.hpp"
 #include <iostream>
 #include <atomic>
 #include <chrono>
@@ -22,7 +22,7 @@ int main(){
 
 /*
 clang++ -std=c++20 -O3 -Wall -Wextra \
-  src/ws/ws_kraken.cpp test/test_ws_kraken.cpp \
+  src/venues/kraken/ws.cpp test/test_ws_kraken.cpp \
   -I src -I"$BOOST_PREFIX/include" -I"$OPENSSL_PREFIX/include" \
   "$OPENSSL_PREFIX/lib/libssl.dylib" \
   "$OPENSSL_PREFIX/lib/libcrypto.dylib" \

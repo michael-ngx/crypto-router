@@ -20,12 +20,34 @@ export default function TradePage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [selectedPair, setSelectedPair] = useState("BTC-USD");
+  const [availablePairs, setAvailablePairs] = useState<string[]>([]);
+  const [pairsLoading, setPairsLoading] = useState(false);
+  const [pairsError, setPairsError] = useState<string | null>(null);
   const [bookData, setBookData] = useState<BookResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Track time of last successful book update (with at least one level)
   const lastUpdateRef = useRef<number | null>(null);
+
+  const invalidateBook = ({
+    loading = true,
+    resetLastUpdate = true,
+    clearError = true,
+  }: {
+    loading?: boolean;
+    resetLastUpdate?: boolean;
+    clearError?: boolean;
+  } = {}) => {
+    setIsLoading(loading);
+    setBookData(null);
+    if (clearError) {
+      setError(null);
+    }
+    if (resetLastUpdate) {
+      lastUpdateRef.current = null;
+    }
+  };
 
   // Redirect to home if not authenticated
   useEffect(() => {
@@ -34,21 +56,80 @@ export default function TradePage() {
     }
   }, [isAuthenticated, authLoading, router]);
 
+  // Fetch available trading pairs from backend
+  useEffect(() => {
+    if (authLoading || !isAuthenticated) {
+      return;
+    }
+
+    let isCancelled = false;
+    setPairsLoading(true);
+    setPairsError(null);
+
+    const fetchPairs = async () => {
+      try {
+        const resp = await fetch(`${API_BASE_URL}/api/pairs`);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        const pairs = Array.isArray(data?.pairs)
+          ? data.pairs.filter(
+              (pair: unknown): pair is string =>
+                typeof pair === "string" && pair.length > 0
+            )
+          : [];
+
+        if (!isCancelled) {
+          setAvailablePairs(pairs);
+          setSelectedPair((prev) => {
+            if (pairs.length === 0) {
+              return "";
+            }
+            return pairs.includes(prev) ? prev : pairs[0];
+          });
+        }
+      } catch (err: any) {
+        if (!isCancelled) {
+          setPairsError(err?.message ?? "Failed to fetch pairs");
+        }
+      } finally {
+        if (!isCancelled) {
+          setPairsLoading(false);
+        }
+      }
+    };
+
+    fetchPairs();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [authLoading, isAuthenticated]);
+
   // Fetch order book data - must be called before any early returns
   useEffect(() => {
     // Don't fetch if not authenticated or still loading
     if (authLoading || !isAuthenticated) {
       return;
     }
+
+    if (!selectedPair) {
+      invalidateBook({ loading: false });
+      return;
+    }
+
+    if (availablePairs.length > 0 && !availablePairs.includes(selectedPair)) {
+      return;
+    }
+
     let isCancelled = false;
     let timerId: number | null = null;
     let pollSeq = 0;
 
     // New symbol or first mount: treat as initial load, no data yet.
-    setIsLoading(true);
-    setError(null);
-    setBookData(null);
-    lastUpdateRef.current = null;
+    invalidateBook();
 
     const fetchBook = async () => {
       if (isCancelled) return;
@@ -59,9 +140,7 @@ export default function TradePage() {
       // If we had data before and it's stale, go back to a "loading" state:
       // show Updating..., hide table, no error.
       if (lastUpdate !== null && now - lastUpdate > STALE_MS) {
-        setIsLoading(true);
-        setBookData(null);
-        setError(null);
+        invalidateBook({ resetLastUpdate: false });
       }
 
       const currentSeq = ++pollSeq;
@@ -96,8 +175,7 @@ export default function TradePage() {
         if (!isCancelled) {
           // Error state: we keep polling but show "Updating..." + error,
           // and invalidate the table.
-          setIsLoading(true);
-          setBookData(null);
+          invalidateBook({ resetLastUpdate: false, clearError: false });
           setError(err?.message ?? "Failed to fetch book");
           // lastUpdateRef.current remains unchanged: tracks last success.
         }
@@ -116,7 +194,7 @@ export default function TradePage() {
         clearTimeout(timerId);
       }
     };
-  }, [selectedPair, authLoading, isAuthenticated]);
+  }, [selectedPair, authLoading, isAuthenticated, availablePairs]);
 
   if (authLoading || !isAuthenticated) {
     return (
@@ -125,6 +203,16 @@ export default function TradePage() {
       </div>
     );
   }
+
+  const formatPairLabel = (pair: string) => pair.split("-").join(" / ");
+  const displayBook =
+    selectedPair && bookData?.symbol === selectedPair ? bookData : null;
+  const selectOptions =
+    availablePairs.length > 0
+      ? availablePairs
+      : selectedPair
+        ? [selectedPair]
+        : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -143,13 +231,29 @@ export default function TradePage() {
           <label className="text-sm text-slate-200">Trading pair</label>
           <select
             value={selectedPair}
-            onChange={(e) => setSelectedPair(e.target.value)}
+            onChange={(e) => {
+              setSelectedPair(e.target.value);
+              invalidateBook();
+            }}
+            disabled={pairsLoading || availablePairs.length === 0}
             className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
           >
-            <option value="BTC-USD">BTC / USD</option>
-            {/* TODO: dynamically add available pairs here */}
+            {pairsLoading ? (
+              <option value={selectedPair || ""}>Loading pairs...</option>
+            ) : selectOptions.length === 0 ? (
+              <option value="">No pairs available</option>
+            ) : (
+              selectOptions.map((pair) => (
+                <option key={pair} value={pair}>
+                  {formatPairLabel(pair)}
+                </option>
+              ))
+            )}
           </select>
         </div>
+        {pairsError && (
+          <p className="text-[11px] text-red-400">Failed to load pairs: {pairsError}</p>
+        )}
       </section>
 
       {error && (
@@ -159,14 +263,18 @@ export default function TradePage() {
       )}
 
       {/* Enforce mutual exclusivity: table only when we have valid data */}
-      {bookData && !isLoading ? (
-        <ConsolidatedOrderBook book={bookData} lastUpdated={lastUpdateRef.current} />
+      {displayBook && !isLoading ? (
+        <ConsolidatedOrderBook book={displayBook} lastUpdated={lastUpdateRef.current} />
       ) : null}
 
       {/* Order Form */}
       <section className="rounded-lg border border-slate-700 bg-slate-900/50 p-6">
         <h2 className="mb-4 text-lg font-semibold text-slate-50">Place Order</h2>
-        <OrderForm symbol={selectedPair} />
+        {selectedPair ? (
+          <OrderForm symbol={selectedPair} />
+        ) : (
+          <p className="text-sm text-slate-400">No trading pairs available.</p>
+        )}
       </section>
     </div>
   );

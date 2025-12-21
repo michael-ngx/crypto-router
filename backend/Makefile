@@ -1,5 +1,36 @@
 # Makefile for crypto-router backend
 
+# Homebrew dependencies
+BREW_DEPS := boost openssl simdjson libpq libpqxx
+
+.DEFAULT_GOAL := all
+
+check_deps:
+	@# Ensure Homebrew exists
+	@if ! command -v brew >/dev/null 2>&1; then \
+		echo "Error: Homebrew not found. Please install Homebrew from https://brew.sh first."; \
+		exit 1; \
+	fi
+
+	@echo "Checking required Homebrew packages..."
+	@missing=0; \
+	for pkg in $(BREW_DEPS); do \
+		if ! brew list --versions $$pkg >/dev/null 2>&1; then \
+			echo "  - Missing: $$pkg"; \
+			missing=1; \
+		fi; \
+	done; \
+	if [ $$missing -ne 0 ]; then \
+		echo ""; \
+		echo "Some dependencies are missing."; \
+		echo "Install them with:"; \
+		echo "  brew install $(BREW_DEPS)"; \
+		echo ""; \
+		exit 1; \
+	else \
+		echo "All Homebrew dependencies are installed ✅"; \
+	fi
+
 # Detect library prefixes
 BOOST_PREFIX := $(shell brew --prefix boost 2>/dev/null || echo "/usr/local")
 OPENSSL_PREFIX := $(shell brew --prefix openssl 2>/dev/null || echo "/usr/local")
@@ -31,21 +62,22 @@ RPATH := -Wl,-rpath,$(SIMDJSON_PREFIX)/lib \
 DEFINES := -DBOOST_ERROR_CODE_HEADER_ONLY
 
 # Source files
-SOURCES := src/ws/ws_coinbase.cpp \
-           src/ws/ws_kraken.cpp \
+SOURCES := src/venues/coinbase/ws.cpp \
+           src/venues/kraken/ws.cpp \
            src/md/symbol_codec.cpp \
-           src/pipeline/master_feed.cpp \
+           src/ui/master_feed.cpp \
            src/server/server_main.cpp
 
 # Output
 TARGET := build/server
 
 # Default target
-all: $(TARGET)
+all: check_deps $(TARGET)
 
 # Build the server
 $(TARGET): $(SOURCES)
 	@mkdir -p build
+	@echo "Building $(TARGET)..."
 	$(CXX) $(CXXFLAGS) $(SOURCES) $(INCLUDES) $(LIBS) $(RPATH) $(DEFINES) -o $(TARGET)
 
 # Clean build artifacts
@@ -60,5 +92,4 @@ rebuild: clean all
 run: $(TARGET)
 	./$(TARGET)
 
-.PHONY: all clean rebuild run
-
+.PHONY: all clean rebuild run check_deps

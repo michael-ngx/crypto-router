@@ -8,12 +8,11 @@
 #include <chrono>
 #include <iostream>
 
-#include "venue_feed_iface.hpp"
 #include "util/spsc_ring.hpp"
-#include "ws/ws.hpp"
-#include "md/book.hpp"
-#include "md/book_events.hpp"
-#include "md/symbol_codec.hpp"
+#include "venue_feed_iface.hpp"
+#include "book.hpp"
+#include "book_events.hpp"
+#include "symbol_codec.hpp"
 #include "top_snapshot.hpp"
 
 // Backpressure policy when the queue is full

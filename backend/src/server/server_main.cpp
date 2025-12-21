@@ -7,14 +7,13 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
-#include "ws/ws.hpp"
-#include "md/symbol_codec.hpp"
-#include "md/book_parser_coinbase.hpp"
-#include "md/book_parser_kraken.hpp"
-
-#include "pipeline/venue_feed.hpp"
-#include "pipeline/master_feed.hpp"
+#include "ui/master_feed.hpp"
+#include "venues/venue_api.hpp"
+#include "venues/venue_registry.hpp"
+#include "server/pairs_config.hpp"
+#include "server/venues_config.hpp"
 #include "server/http_server.hpp"
 #include "server/http_routes.hpp"
 #include "supabase/storage_supabase.hpp"
@@ -95,7 +94,7 @@ std::string get_supabase_connection_string() {
 }
 
 int main() {
-    // Load .env file first (if it exists)
+    // Load .env file
     load_env_file();
     
     // Initialize Supabase connection and create tables
@@ -110,29 +109,88 @@ int main() {
         std::cerr << "Server will continue without database functionality." << std::endl;
         db_conn_str = ""; // Empty string indicates no database
     }
-    // Create VenueFeeds for coinbase and kraken BTC-USD
-    using CbFeed = VenueFeed<CoinbaseWs, CoinbaseBookParser>;
-    using KrFeed = VenueFeed<KrakenWs,  KrakenBookParser>;
 
-    const std::string canonical = "BTC-USD";
-    auto cb = std::make_shared<CbFeed>("Coinbase", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
-    auto kr = std::make_shared<KrFeed>("Kraken",  canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
+    // Build venue feeds for all configured pairs.
+    struct VenueRuntime {
+        std::string name;
+        const VenueFactory* factory{nullptr};
+        std::unique_ptr<IVenueApi> api;
+    };
 
-    cb->start_ws(SymbolCodec::to_venue("Coinbase", canonical), 443);
-    kr->start_ws(SymbolCodec::to_venue("Kraken",  canonical), 443);
+    const auto& registry = VenueRegistry::instance();
+    std::vector<VenueRuntime> venues;
+    venues.reserve(kVenueConfigs.size());
+    for (const auto& venue_cfg : kVenueConfigs) {
+        const VenueFactory* factory = registry.find(venue_cfg.name);
+        if (!factory) {
+            std::cerr << "[setup] Unknown venue '" << venue_cfg.name
+                      << "'; skipping." << std::endl;
+            continue;
+        }
 
+        auto api = factory->make_api ? factory->make_api() : nullptr;
+        if (!api) {
+            std::cerr << "[setup] Venue '" << venue_cfg.name
+                      << "' did not provide an API implementation; skipping."
+                      << std::endl;
+            continue;
+        }
 
-    // Create UIMasterFeed and register venue feeds
-    UIMasterFeed ui{canonical};
-    ui.add_feed(cb);
-    ui.add_feed(kr);
+        venues.push_back(VenueRuntime{venue_cfg.name, factory, std::move(api)});
+    }
+
+    // Create UI master feeds for each trading pair, stored in a registry.
+    UIFeedRegistry ui_feeds;
+    std::vector<std::shared_ptr<IVenueFeed>> all_feeds;
+
+    for (const auto& pair : kCanonicalPairs) {
+        // Create master feed for this pair
+        auto ui = std::make_shared<UIMasterFeed>(pair);
+        bool registered = false;
+        
+        // Register venues that support this pair to the master feed
+        for (const auto& venue : venues) {
+            if (!venue.factory || !venue.api || !venue.api->supports_pair(pair)) {
+                std::cerr << "[setup] " << venue.name
+                          << " does not support " << pair
+                          << "; skipping." << std::endl;
+                continue;
+            }
+
+            auto feed = venue.factory->make_feed
+                ? venue.factory->make_feed(pair)
+                : nullptr;
+            if (!feed) {
+                std::cerr << "[setup] Venue '" << venue.name
+                          << "' failed to create feed; skipping." << std::endl;
+                continue;
+            }
+
+            const std::string venue_symbol =
+                venue.factory->to_venue_symbol
+                    ? venue.factory->to_venue_symbol(pair)
+                    : pair;
+            feed->start_ws(venue_symbol, 443);
+            ui->add_feed(feed);   // Register to master feed
+            all_feeds.push_back(feed);
+            registered = true;
+        }
+        
+        // If at least one venue registered, add to registry
+        if (registered) {
+            ui_feeds.emplace(pair, ui);
+        } else {
+            std::cerr << "[setup] No supported venues for " << pair
+                      << "; not registering UI feed." << std::endl;
+        }
+    }
 
 
     // Start HTTP server
     boost::asio::io_context ioc{1};
     tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(ui, db_conn_str, req, res);
+      handle_request(ui_feeds, db_conn_str, req, res);
     }};
     server.run();
 
@@ -141,7 +199,10 @@ int main() {
     
     ioc.run();
 
-    kr->stop();
-    cb->stop();
+    for (auto& feed : all_feeds) {
+        if (feed) {
+            feed->stop();
+        }
+    }
     return 0;
 }

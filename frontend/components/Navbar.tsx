@@ -49,7 +49,7 @@ export function Navbar() {
             {isAuthenticated ? (
               <>
                 <Link href="/trade" className={linkClasses("/trade")}>Trade</Link>
-                <Link href="/posttrade" className={linkClasses("/posttrade")}>Post-trade</Link>
+                <Link href="/posttrade" className={linkClasses("/posttrade")}>Orders</Link>
               </>
             ) : (
               <Link href="/" className={linkClasses("/")}>Home</Link>

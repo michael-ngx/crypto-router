@@ -6,8 +6,8 @@
 #include <unordered_map>
 #include <mutex>
 
-#include "venue_feed_iface.hpp"
-#include "top_snapshot.hpp"
+#include "md/venue_feed_iface.hpp"
+#include "md/top_snapshot.hpp"
 
 // One row in the UI ladder with venue information.
 struct UILadderLevel {
