@@ -2,10 +2,9 @@
 
 
 ##  1. <a name='TODO'></a>TODO
-- Frontend
-    - [ ] Fix backend market data API to allow switching currency pairs and allowed venues
 - Market data
     - [ ] Extend available venue list
+    - [ ] Implement checks for venue's crypto pair support
 - Trade
     - [ ] Entire decision making algorithm
     - [ ] Send test orders and receive confirmation from sandbox environments

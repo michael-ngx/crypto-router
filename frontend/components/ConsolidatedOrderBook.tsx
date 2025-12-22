@@ -7,10 +7,14 @@ export type OrderLevel = {
 };
 
 export type BookResponse = {
+  status?: {
+    code: number;
+    message: string;
+  };
+  last_updated_ms?: number | null;
   symbol: string;
   bids: OrderLevel[];
   asks: OrderLevel[];
-  timestamp?: number | string;
 };
 
 type NormalizedBook = {

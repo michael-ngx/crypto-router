@@ -1,5 +1,15 @@
 #include "master_feed.hpp"
 #include <algorithm>
+#include <chrono>
+
+namespace {
+constexpr std::int64_t kStaleNs = 5'000'000'000; // 5 seconds
+
+std::int64_t now_ns() {
+    using namespace std::chrono;
+    return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+}
+}
 
 void UIMasterFeed::add_feed(std::shared_ptr<IVenueFeed> feed) {
     if (!feed) return;
@@ -25,20 +35,35 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         }
     }
 
-    // Build per-venue map.
+    const auto now = now_ns();
+    std::vector<std::shared_ptr<const TopSnapshot>> live_snaps;
+    live_snaps.reserve(snaps.size());
+
+    // Build per-venue map from live snapshots only.
     for (auto& sp : snaps) {
         if (!sp) continue;
+        if (sp->ts_ns <= 0) continue;
+        if (now - sp->ts_ns > kStaleNs) continue;
+
+        live_snaps.push_back(sp);
         out.per_venue.emplace(sp->venue, sp);
+        if (sp->ts_ms > out.last_updated_ms) {
+            out.last_updated_ms = sp->ts_ms;
+        }
+    }
+
+    if (live_snaps.empty()) {
+        out.is_cold = true;
+        return out;
     }
 
     // Flatten all per-venue ladders into a single list with venue info.
     std::vector<UILadderLevel> all_bids;
     std::vector<UILadderLevel> all_asks;
-    all_bids.reserve(snaps.size() * depth);
-    all_asks.reserve(snaps.size() * depth);
+    all_bids.reserve(live_snaps.size() * depth);
+    all_asks.reserve(live_snaps.size() * depth);
 
-    for (auto& sp : snaps) {
-        if (!sp) continue;
+    for (auto& sp : live_snaps) {
 
         for (const auto& [px, sz] : sp->bids) {
             all_bids.push_back(UILadderLevel{sp->venue, px, sz});

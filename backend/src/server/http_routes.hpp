@@ -579,7 +579,24 @@ inline void handle_book(const UIFeedRegistry& feeds,
     UIConsolidated snap = it->second->snapshot_consolidated(depth);
 
     std::ostringstream os;
+    if (snap.is_cold) {
+        res.result(http::status::service_unavailable);
+    } else {
+        res.result(http::status::ok);
+    }
+
     os << "{";
+    os << "\"status\":{";
+    os << "\"code\":" << (snap.is_cold ? 503 : 200) << ",";
+    os << "\"message\":\""
+       << (snap.is_cold ? "Market data stale: all venues cold" : "OK")
+       << "\"";
+    os << "},";
+    if (snap.last_updated_ms > 0) {
+        os << "\"last_updated_ms\":" << snap.last_updated_ms << ",";
+    } else {
+        os << "\"last_updated_ms\":null,";
+    }
     os << "\"symbol\":\"" << json_escape(snap.symbol) << "\",";
 
     // Consolidated ladders with venue information for UI
@@ -608,7 +625,6 @@ inline void handle_book(const UIFeedRegistry& feeds,
     os << "}"; // per_venue
     os << "}"; // root object
 
-    res.result(http::status::ok);
     res.set(http::field::content_type, "application/json");
     res.body() = os.str();
 }

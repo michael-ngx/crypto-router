@@ -12,10 +12,6 @@ import { OrderForm } from "../../components/OrderForm";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-// How long we allow the book to go without a successful update
-// before we consider it "stale" and show the loading indicator again.
-const STALE_MS = 5000;
-
 export default function TradePage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const router = useRouter();
@@ -134,15 +130,6 @@ export default function TradePage() {
     const fetchBook = async () => {
       if (isCancelled) return;
 
-      const now = Date.now();
-      const lastUpdate = lastUpdateRef.current;
-
-      // If we had data before and it's stale, go back to a "loading" state:
-      // show Updating..., hide table, no error.
-      if (lastUpdate !== null && now - lastUpdate > STALE_MS) {
-        invalidateBook({ resetLastUpdate: false });
-      }
-
       const currentSeq = ++pollSeq;
 
       try {
@@ -151,26 +138,42 @@ export default function TradePage() {
         )}&depth=10`;
 
         const resp = await fetch(url);
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
+        let data: BookResponse | null = null;
+
+        try {
+          data = (await resp.json()) as BookResponse;
+        } catch {
+          data = null;
         }
 
-        const data = (await resp.json()) as BookResponse;
+        if (!resp.ok) {
+          const msg =
+            data?.status?.message ??
+            (data?.status?.code ? `HTTP ${data.status.code}` : `HTTP ${resp.status}`);
+          throw new Error(msg);
+        }
+
+        const statusCode = data?.status?.code ?? 200;
+
+        if (!isCancelled && currentSeq === pollSeq && statusCode !== 200) {
+          invalidateBook();
+          setError(data?.status?.message ?? "Market data unavailable");
+          return;
+        }
 
         const hasLevels =
-          (data.bids && data.bids.length > 0) ||
-          (data.asks && data.asks.length > 0);
+          (data?.bids && data.bids.length > 0) ||
+          (data?.asks && data.asks.length > 0);
 
         if (!isCancelled && currentSeq === pollSeq && hasLevels) {
           // Valid snapshot: enter READY state
           setBookData(data);
           setIsLoading(false);
           setError(null);
-          lastUpdateRef.current = Date.now();
+          lastUpdateRef.current = data?.last_updated_ms ?? null;
         }
         // If !hasLevels: treat as "no new valid data".
-        // We keep whatever state we were already in (loading or ready),
-        // and let stale logic handle it if it goes too long.
+        // We keep whatever state we were already in (loading or ready).
       } catch (err: any) {
         if (!isCancelled) {
           // Error state: we keep polling but show "Updating..." + error,
@@ -227,30 +230,32 @@ export default function TradePage() {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-slate-200">Trading pair</label>
-          <select
-            value={selectedPair}
-            onChange={(e) => {
-              setSelectedPair(e.target.value);
-              invalidateBook();
-            }}
-            disabled={pairsLoading || availablePairs.length === 0}
-            className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
-          >
-            {pairsLoading ? (
-              <option value={selectedPair || ""}>Loading pairs...</option>
-            ) : selectOptions.length === 0 ? (
-              <option value="">No pairs available</option>
-            ) : (
-              selectOptions.map((pair) => (
-                <option key={pair} value={pair}>
-                  {formatPairLabel(pair)}
-                </option>
-              ))
-            )}
-          </select>
-        </div>
+        {!pairsError ? (
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-slate-200">Trading pair</label>
+            <select
+              value={selectedPair}
+              onChange={(e) => {
+                setSelectedPair(e.target.value);
+                invalidateBook();
+              }}
+              disabled={pairsLoading || availablePairs.length === 0}
+              className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
+            >
+              {pairsLoading ? (
+                <option value={selectedPair || ""}>Loading pairs...</option>
+              ) : selectOptions.length === 0 ? (
+                <option value="">No pairs available</option>
+              ) : (
+                selectOptions.map((pair) => (
+                  <option key={pair} value={pair}>
+                    {formatPairLabel(pair)}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+        ) : null}
         {pairsError && (
           <p className="text-[11px] text-red-400">Failed to load pairs: {pairsError}</p>
         )}
