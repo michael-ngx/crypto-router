@@ -8,9 +8,11 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <chrono>
+#include <algorithm>
+#include <cctype>
 
-#include "ui/master_feed.hpp"
-#include "venues/venue_api.hpp"
+#include "server/feed_manager.hpp"
 #include "venues/venue_registry.hpp"
 #include "server/pairs_config.hpp"
 #include "server/venues_config.hpp"
@@ -93,6 +95,44 @@ std::string get_supabase_connection_string() {
     );
 }
 
+std::vector<std::string> parse_csv_env(const char* name) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return {};
+
+    std::vector<std::string> out;
+    std::stringstream ss{std::string(raw)};
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        auto start = item.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        auto end = item.find_last_not_of(" \t");
+        item = item.substr(start, end - start + 1);
+        if (!item.empty()) out.push_back(item);
+    }
+    return out;
+}
+
+int parse_env_int(const char* name, int fallback) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return fallback;
+    char* end = nullptr;
+    long val = std::strtol(raw, &end, 10);
+    if (end == raw || *end != '\0') return fallback;
+    if (val < 0) return fallback;
+    return static_cast<int>(val);
+}
+
+bool parse_env_bool(const char* name, bool fallback) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return fallback;
+    std::string s(raw);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s == "1" || s == "true" || s == "yes" || s == "on") return true;
+    if (s == "0" || s == "false" || s == "no" || s == "off") return false;
+    return fallback;
+}
+
 int main() {
     // Load .env file
     load_env_file();
@@ -110,15 +150,14 @@ int main() {
         db_conn_str = ""; // Empty string indicates no database
     }
 
-    // Build venue feeds for all configured pairs.
-    struct VenueRuntime {
-        std::string name;
-        const VenueFactory* factory{nullptr};
-        std::unique_ptr<IVenueApi> api;
-    };
 
+    /*******************************************************************
+    ***************************  Feed Manager **************************
+     ********************************************************************/
+
+    // Build VenueRuntime(s) for FeedManager. Each VenueRuntime includes the venue name, its factory, and an API instance
     const auto& registry = VenueRegistry::instance();
-    std::vector<VenueRuntime> venues;
+    std::vector<FeedManager::VenueRuntime> venues;
     venues.reserve(kVenueConfigs.size());
     for (const auto& venue_cfg : kVenueConfigs) {
         const VenueFactory* factory = registry.find(venue_cfg.name);
@@ -136,61 +175,37 @@ int main() {
             continue;
         }
 
-        venues.push_back(VenueRuntime{venue_cfg.name, factory, std::move(api)});
+        venues.push_back(FeedManager::VenueRuntime{venue_cfg.name, factory, std::move(api)});
     }
 
-    // Create UI master feeds for each trading pair, stored in a registry.
-    UIFeedRegistry ui_feeds;
-    std::vector<std::shared_ptr<IVenueFeed>> all_feeds;
+    // Parse FeedManager options from environment variables
+    // If some options are missing or invalid, use defaults (e.g. empty hot pairs, 180s idle timeout, 15s sweep interval, no prewarm)
+    FeedManager::Options feed_opts;
+    feed_opts.hot_pairs = parse_csv_env("FEED_HOT_PAIRS");
+    feed_opts.idle_timeout = std::chrono::seconds(parse_env_int("FEED_IDLE_SECONDS", 180));
+    feed_opts.sweep_interval = std::chrono::seconds(parse_env_int("FEED_SWEEP_SECONDS", 15));
+    feed_opts.prewarm_all = parse_env_bool("FEED_PREWARM_ALL", false);
 
-    for (const auto& pair : kCanonicalPairs) {
-        // Create master feed for this pair
-        auto ui = std::make_shared<UIMasterFeed>(pair);
-        bool registered = false;
-        
-        // Register venues that support this pair to the master feed
-        for (const auto& venue : venues) {
-            if (!venue.factory || !venue.api || !venue.api->supports_pair(pair)) {
-                std::cerr << "[setup] " << venue.name
-                          << " does not support " << pair
-                          << "; skipping." << std::endl;
-                continue;
-            }
+    std::vector<std::string> canonical_pairs(kCanonicalPairs.begin(), kCanonicalPairs.end());  // All supporting canonical pairs from config
+    bool prewarm_all = feed_opts.prewarm_all;
 
-            auto feed = venue.factory->make_feed
-                ? venue.factory->make_feed(pair)
-                : nullptr;
-            if (!feed) {
-                std::cerr << "[setup] Venue '" << venue.name
-                          << "' failed to create feed; skipping." << std::endl;
-                continue;
-            }
+    // Create FeedManager instance
+    FeedManager feed_manager(std::move(venues), std::move(canonical_pairs), std::move(feed_opts));
 
-            const std::string venue_symbol =
-                venue.factory->to_venue_symbol
-                    ? venue.factory->to_venue_symbol(pair)
-                    : pair;
-            feed->start_ws(venue_symbol, 443);
-            ui->add_feed(feed);   // Register to master feed
-            all_feeds.push_back(feed);
-            registered = true;
-        }
-        
-        // If at least one venue registered, add to registry
-        if (registered) {
-            ui_feeds.emplace(pair, ui);
-        } else {
-            std::cerr << "[setup] No supported venues for " << pair
-                      << "; not registering UI feed." << std::endl;
-        }
+    if (prewarm_all) {
+        feed_manager.start_all_supported();
+    } else {
+        feed_manager.start_hot();
     }
 
 
-    // Start HTTP server
+    /*******************************************************************
+    ***************************  HTTP server **************************
+     ********************************************************************/
     boost::asio::io_context ioc{1};
     tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(ui_feeds, db_conn_str, req, res);
+      handle_request(feed_manager, db_conn_str, req, res);
     }};
     server.run();
 
@@ -199,10 +214,6 @@ int main() {
     
     ioc.run();
 
-    for (auto& feed : all_feeds) {
-        if (feed) {
-            feed->stop();
-        }
-    }
+    feed_manager.shutdown();
     return 0;
 }

@@ -11,6 +11,7 @@
 #include <vector>
 #include "util/json_encode.hpp"
 #include "ui/master_feed.hpp"
+#include "server/feed_manager.hpp"
 #include "supabase/auth_utils.hpp"
 #include "order_book/storage.hpp"
 #include <simdjson.h>
@@ -18,9 +19,6 @@
 
 namespace http  = boost::beast::http;
 namespace urls  = boost::urls;
-
-// Master feed registry per canonical symbol
-using UIFeedRegistry = std::unordered_map<std::string, std::shared_ptr<UIMasterFeed>>;
 
 // Handle /api/auth/signup endpoint
 inline void handle_signup(const std::string& db_conn_str,
@@ -539,7 +537,7 @@ inline void handle_get_orders(const std::string& db_conn_str,
 }
 
 // Handle /api/book endpoint
-inline void handle_book(const UIFeedRegistry& feeds,
+inline void handle_book(FeedManager& feeds,
                         const urls::url_view& url,
                         http::response<http::string_body>& res)
 {
@@ -568,15 +566,15 @@ inline void handle_book(const UIFeedRegistry& feeds,
         return;
     }
 
-    auto it = feeds.find(symbol);
-    if (it == feeds.end() || !it->second) {
+    auto ui = feeds.get_or_subscribe(symbol);
+    if (!ui) {
         res.result(http::status::not_found);
         res.set(http::field::content_type, "application/json");
         res.body() = R"({"error":"symbol not supported"})";
         return;
     }
 
-    UIConsolidated snap = it->second->snapshot_consolidated(depth);
+    UIConsolidated snap = ui->snapshot_consolidated(depth);
 
     std::ostringstream os;
     if (snap.is_cold) {
@@ -630,14 +628,10 @@ inline void handle_book(const UIFeedRegistry& feeds,
 }
 
 // Handle /api/pairs endpoint
-inline void handle_pairs(const UIFeedRegistry& feeds,
+inline void handle_pairs(const FeedManager& feeds,
                          http::response<http::string_body>& res)
 {
-    std::vector<std::string> pairs;
-    pairs.reserve(feeds.size());
-    for (const auto& kv : feeds) {
-        pairs.push_back(kv.first);
-    }
+    std::vector<std::string> pairs = feeds.list_supported_pairs();
     std::sort(pairs.begin(), pairs.end());
 
     std::ostringstream os;
@@ -653,7 +647,7 @@ inline void handle_pairs(const UIFeedRegistry& feeds,
     res.body() = os.str();
 }
 
-inline void handle_request(const UIFeedRegistry& feeds,
+inline void handle_request(FeedManager& feeds,
                            const std::string& db_conn_str,
                            const http::request<http::string_body>& req,
                            http::response<http::string_body>& res)
