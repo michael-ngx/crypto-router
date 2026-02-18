@@ -6,8 +6,12 @@
 #include <optional>
 #include <algorithm>
 #include <sstream>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 #include "util/json_encode.hpp"
-#include "pipeline/master_feed.hpp"
+#include "ui/master_feed.hpp"
+#include "server/feed_manager.hpp"
 #include "supabase/auth_utils.hpp"
 #include "order_book/storage.hpp"
 #include <simdjson.h>
@@ -533,11 +537,12 @@ inline void handle_get_orders(const std::string& db_conn_str,
 }
 
 // Handle /api/book endpoint
-inline void handle_book(UIMasterFeed& ui,
+inline void handle_book(FeedManager& feeds,
                         const urls::url_view& url,
                         http::response<http::string_body>& res)
 {
     std::size_t depth = MAX_TOP_DEPTH;
+    std::string symbol;
 
     for (auto const& p : url.params()) {
         if (p.key == "depth") {
@@ -549,13 +554,47 @@ inline void handle_book(UIMasterFeed& ui,
             } catch (...) {
                 // ignore invalid input
             }
+        } else if (p.key == "symbol") {
+            symbol = std::string(p.value);
         }
     }
 
-    UIConsolidated snap = ui.snapshot_consolidated(depth);
+    if (symbol.empty()) {
+        res.result(http::status::bad_request);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"symbol parameter required"})";
+        return;
+    }
+
+    auto ui = feeds.get_or_subscribe(symbol);
+    if (!ui) {
+        res.result(http::status::not_found);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"symbol not supported"})";
+        return;
+    }
+
+    UIConsolidated snap = ui->snapshot_consolidated(depth);
 
     std::ostringstream os;
+    if (snap.is_cold) {
+        res.result(http::status::service_unavailable);
+    } else {
+        res.result(http::status::ok);
+    }
+
     os << "{";
+    os << "\"status\":{";
+    os << "\"code\":" << (snap.is_cold ? 503 : 200) << ",";
+    os << "\"message\":\""
+       << (snap.is_cold ? "Market data stale: all venues cold" : "OK")
+       << "\"";
+    os << "},";
+    if (snap.last_updated_ms > 0) {
+        os << "\"last_updated_ms\":" << snap.last_updated_ms << ",";
+    } else {
+        os << "\"last_updated_ms\":null,";
+    }
     os << "\"symbol\":\"" << json_escape(snap.symbol) << "\",";
 
     // Consolidated ladders with venue information for UI
@@ -584,12 +623,31 @@ inline void handle_book(UIMasterFeed& ui,
     os << "}"; // per_venue
     os << "}"; // root object
 
+    res.set(http::field::content_type, "application/json");
+    res.body() = os.str();
+}
+
+// Handle /api/pairs endpoint
+inline void handle_pairs(const FeedManager& feeds,
+                         http::response<http::string_body>& res)
+{
+    std::vector<std::string> pairs = feeds.list_supported_pairs();
+    std::sort(pairs.begin(), pairs.end());
+
+    std::ostringstream os;
+    os << "{\"pairs\":[";
+    for (std::size_t i = 0; i < pairs.size(); ++i) {
+        if (i > 0) os << ",";
+        os << "\"" << json_escape(pairs[i]) << "\"";
+    }
+    os << "]}";
+
     res.result(http::status::ok);
     res.set(http::field::content_type, "application/json");
     res.body() = os.str();
 }
 
-inline void handle_request(UIMasterFeed& ui,
+inline void handle_request(FeedManager& feeds,
                            const std::string& db_conn_str,
                            const http::request<http::string_body>& req,
                            http::response<http::string_body>& res)
@@ -616,9 +674,15 @@ inline void handle_request(UIMasterFeed& ui,
         return;
     }
 
-    // /api/book?depth=10
+    // /api/pairs
+    if (req.method() == http::verb::get && url.path() == "/api/pairs") {
+        handle_pairs(feeds, res);
+        return;
+    }
+
+    // /api/book?symbol=BTC-USD&depth=10
     if (req.method() == http::verb::get && url.path() == "/api/book") {
-        handle_book(ui, url, res);
+        handle_book(feeds, url, res);
         return;
     }
 

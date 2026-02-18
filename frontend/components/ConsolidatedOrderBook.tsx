@@ -7,10 +7,14 @@ export type OrderLevel = {
 };
 
 export type BookResponse = {
+  status?: {
+    code: number;
+    message: string;
+  };
+  last_updated_ms?: number | null;
   symbol: string;
   bids: OrderLevel[];
   asks: OrderLevel[];
-  timestamp?: number | string;
 };
 
 type NormalizedBook = {
@@ -225,14 +229,9 @@ export function ConsolidatedOrderBook({ book, lastUpdated }: Props) {
         </table>
       </div>
 
-      <div className="mt-2 flex justify-between text-[10px] text-slate-400">
-        <div>
-          <span className="text-red-500 font-medium">Red</span> prices indicate ask side. Crossed levels logic can be added later.
-        </div>
+      <div className="mt-2 flex justify-end text-[10px] text-slate-400">
 
-        <div className="text-right">
-          {lastUpdated ? `Last updated: ${new Date(lastUpdated)}` : ""}
-        </div>
+        {lastUpdated ? `Last updated: ${new Date(lastUpdated)}` : ""}
       </div>
     </div>
   );

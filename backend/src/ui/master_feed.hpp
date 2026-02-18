@@ -4,10 +4,11 @@
 #include <string>
 #include <utility>
 #include <unordered_map>
+#include <cstdint>
 #include <mutex>
 
-#include "venue_feed_iface.hpp"
-#include "top_snapshot.hpp"
+#include "md/venue_feed_iface.hpp"
+#include "md/top_snapshot.hpp"
 
 // One row in the UI ladder with venue information.
 struct UILadderLevel {
@@ -27,6 +28,12 @@ struct UIConsolidated {
 
     // Per-venue snapshots for side panels or debugging.
     std::unordered_map<std::string, std::shared_ptr<const TopSnapshot>> per_venue;
+
+    // True when all venues are stale or missing.
+    bool is_cold{false};
+
+    // Latest update time across non-stale venues (epoch ms).
+    std::int64_t last_updated_ms{0};
 };
 
 // UIMasterFeed collects IVenueFeed readers and builds a consolidated ladder

@@ -8,12 +8,11 @@
 #include <chrono>
 #include <iostream>
 
-#include "venue_feed_iface.hpp"
 #include "util/spsc_ring.hpp"
-#include "ws/ws.hpp"
-#include "md/book.hpp"
-#include "md/book_events.hpp"
-#include "md/symbol_codec.hpp"
+#include "venue_feed_iface.hpp"
+#include "book.hpp"
+#include "book_events.hpp"
+#include "symbol_codec.hpp"
 #include "top_snapshot.hpp"
 
 // Backpressure policy when the queue is full
@@ -107,12 +106,18 @@ private:
         return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
     }
 
+    static std::int64_t now_ms() {
+        using namespace std::chrono;
+        return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+    }
+
     // Capture and publish a fresh TopSnapshot (immutable)
     void publish_top(std::size_t depth) {
         TopSnapshot tmp;
         tmp.venue  = venue_;
         tmp.symbol = canonical_;
         tmp.ts_ns  = now_ns();
+        tmp.ts_ms  = now_ms();
         tmp.bids   = book_.top_bids(depth);
         tmp.asks   = book_.top_asks(depth);
 

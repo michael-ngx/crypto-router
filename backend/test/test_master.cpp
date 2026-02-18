@@ -1,8 +1,9 @@
-#include "../src/pipeline/venue_feed.hpp"
-#include "../src/pipeline/master_feed.hpp"
-#include "../src/ws/ws.hpp"
-#include "../src/md/book_parser_coinbase.hpp"
-#include "../src/md/book_parser_kraken.hpp"
+#include "../src/md/venue_feed.hpp"
+#include "../src/ui/master_feed.hpp"
+#include "../src/venues/coinbase/ws.hpp"
+#include "../src/venues/kraken/ws.hpp"
+#include "../src/venues/coinbase/parser.hpp"
+#include "../src/venues/kraken/parser.hpp"
 #include "../src/md/symbol_codec.hpp"
 
 #include <iostream>
@@ -70,9 +71,9 @@ SIMDJSON_PREFIX=$(brew --prefix simdjson)
 mkdir -p build
 
 clang++ -std=c++20 -O3 -Wall -Wextra \
-  src/ws/ws_coinbase.cpp src/ws/ws_kraken.cpp \
+  src/venues/coinbase/ws.cpp src/venues/kraken/ws.cpp \
   src/md/symbol_codec.cpp \
-  src/api/master_feed.cpp \
+  src/ui/master_feed.cpp \
   test/test_master.cpp \
   -I src -I"$SIMDJSON_PREFIX/include" -I"$BOOST_PREFIX/include" -I"$OPENSSL_PREFIX/include" \
   -L"$SIMDJSON_PREFIX/lib" -lsimdjson \
@@ -82,5 +83,5 @@ clang++ -std=c++20 -O3 -Wall -Wextra \
   -DBOOST_ERROR_CODE_HEADER_ONLY \
   -o build/test_master
 
-./build/test_master_feed
+./build/test_master
 */

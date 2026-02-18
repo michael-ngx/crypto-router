@@ -3,10 +3,11 @@
 #include <iomanip>
 #include <thread>
 
-#include "pipeline/venue_feed.hpp"
+#include "md/venue_feed.hpp"
 #include "md/symbol_codec.hpp"
 #include "md/book.hpp"
-#include "md/book_parser_coinbase.hpp"
+#include "venues/coinbase/parser.hpp"
+#include "venues/coinbase/ws.hpp"
 
 // Alias the feed for Coinbase
 using CbFeed = VenueFeed<CoinbaseWs, CoinbaseBookParser, 4096>;
@@ -70,7 +71,7 @@ SIMDJSON_PREFIX=$(brew --prefix simdjson)
 mkdir -p build
 
 clang++ -std=c++20 -O3 -Wall -Wextra \
-  src/ws/ws_coinbase.cpp \
+  src/venues/coinbase/ws.cpp \
   src/md/symbol_codec.cpp \
   test/test_pipeline_coinbase.cpp \
   -I src -I"$SIMDJSON_PREFIX/include" -I"$BOOST_PREFIX/include" -I"$OPENSSL_PREFIX/include" \

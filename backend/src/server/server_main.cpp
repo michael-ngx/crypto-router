@@ -7,14 +7,15 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <vector>
+#include <chrono>
+#include <algorithm>
+#include <cctype>
 
-#include "ws/ws.hpp"
-#include "md/symbol_codec.hpp"
-#include "md/book_parser_coinbase.hpp"
-#include "md/book_parser_kraken.hpp"
-
-#include "pipeline/venue_feed.hpp"
-#include "pipeline/master_feed.hpp"
+#include "server/feed_manager.hpp"
+#include "venues/venue_registry.hpp"
+#include "server/pairs_config.hpp"
+#include "server/venues_config.hpp"
 #include "server/http_server.hpp"
 #include "server/http_routes.hpp"
 #include "supabase/storage_supabase.hpp"
@@ -94,8 +95,46 @@ std::string get_supabase_connection_string() {
     );
 }
 
+std::vector<std::string> parse_csv_env(const char* name) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return {};
+
+    std::vector<std::string> out;
+    std::stringstream ss{std::string(raw)};
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        auto start = item.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        auto end = item.find_last_not_of(" \t");
+        item = item.substr(start, end - start + 1);
+        if (!item.empty()) out.push_back(item);
+    }
+    return out;
+}
+
+int parse_env_int(const char* name, int fallback) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return fallback;
+    char* end = nullptr;
+    long val = std::strtol(raw, &end, 10);
+    if (end == raw || *end != '\0') return fallback;
+    if (val < 0) return fallback;
+    return static_cast<int>(val);
+}
+
+bool parse_env_bool(const char* name, bool fallback) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return fallback;
+    std::string s(raw);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s == "1" || s == "true" || s == "yes" || s == "on") return true;
+    if (s == "0" || s == "false" || s == "no" || s == "off") return false;
+    return fallback;
+}
+
 int main() {
-    // Load .env file first (if it exists)
+    // Load .env file
     load_env_file();
     
     // Initialize Supabase connection and create tables
@@ -110,29 +149,63 @@ int main() {
         std::cerr << "Server will continue without database functionality." << std::endl;
         db_conn_str = ""; // Empty string indicates no database
     }
-    // Create VenueFeeds for coinbase and kraken BTC-USD
-    using CbFeed = VenueFeed<CoinbaseWs, CoinbaseBookParser>;
-    using KrFeed = VenueFeed<KrakenWs,  KrakenBookParser>;
-
-    const std::string canonical = "BTC-USD";
-    auto cb = std::make_shared<CbFeed>("Coinbase", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
-    auto kr = std::make_shared<KrFeed>("Kraken",  canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
-
-    cb->start_ws(SymbolCodec::to_venue("Coinbase", canonical), 443);
-    kr->start_ws(SymbolCodec::to_venue("Kraken",  canonical), 443);
 
 
-    // Create UIMasterFeed and register venue feeds
-    UIMasterFeed ui{canonical};
-    ui.add_feed(cb);
-    ui.add_feed(kr);
+    /*******************************************************************
+    ***************************  Feed Manager **************************
+     ********************************************************************/
+
+    // Build VenueRuntime(s) for FeedManager. Each VenueRuntime includes the venue name, its factory, and an API instance
+    const auto& registry = VenueRegistry::instance();
+    std::vector<FeedManager::VenueRuntime> venues;
+    venues.reserve(kVenueConfigs.size());
+    for (const auto& venue_cfg : kVenueConfigs) {
+        const VenueFactory* factory = registry.find(venue_cfg.name);
+        if (!factory) {
+            std::cerr << "[setup] Unknown venue '" << venue_cfg.name
+                      << "'; skipping." << std::endl;
+            continue;
+        }
+
+        auto api = factory->make_api ? factory->make_api() : nullptr;
+        if (!api) {
+            std::cerr << "[setup] Venue '" << venue_cfg.name
+                      << "' did not provide an API implementation; skipping."
+                      << std::endl;
+            continue;
+        }
+
+        venues.push_back(FeedManager::VenueRuntime{venue_cfg.name, factory, std::move(api)});
+    }
+
+    // Parse FeedManager options from environment variables
+    // If some options are missing or invalid, use defaults (e.g. empty hot pairs, 180s idle timeout, 15s sweep interval, no prewarm)
+    FeedManager::Options feed_opts;
+    feed_opts.hot_pairs = parse_csv_env("FEED_HOT_PAIRS");
+    feed_opts.idle_timeout = std::chrono::seconds(parse_env_int("FEED_IDLE_SECONDS", 180));
+    feed_opts.sweep_interval = std::chrono::seconds(parse_env_int("FEED_SWEEP_SECONDS", 15));
+    feed_opts.prewarm_all = parse_env_bool("FEED_PREWARM_ALL", false);
+
+    std::vector<std::string> canonical_pairs(kCanonicalPairs.begin(), kCanonicalPairs.end());  // All supporting canonical pairs from config
+    bool prewarm_all = feed_opts.prewarm_all;
+
+    // Create FeedManager instance
+    FeedManager feed_manager(std::move(venues), std::move(canonical_pairs), std::move(feed_opts));
+
+    if (prewarm_all) {
+        feed_manager.start_all_supported();
+    } else {
+        feed_manager.start_hot();
+    }
 
 
-    // Start HTTP server
+    /*******************************************************************
+    ***************************  HTTP server **************************
+     ********************************************************************/
     boost::asio::io_context ioc{1};
     tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(ui, db_conn_str, req, res);
+      handle_request(feed_manager, db_conn_str, req, res);
     }};
     server.run();
 
@@ -141,7 +214,6 @@ int main() {
     
     ioc.run();
 
-    kr->stop();
-    cb->stop();
+    feed_manager.shutdown();
     return 0;
 }

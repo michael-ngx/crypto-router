@@ -10,6 +10,7 @@ struct TopSnapshot {
     std::string venue;   // "Coinbase", "Kraken", ...
     std::string symbol;  // canonical, e.g. "BTC-USD"
     std::int64_t ts_ns{0};
+    std::int64_t ts_ms{0};
 
     // best-to-worse order
     std::vector<std::pair<double,double>> bids; // (price, size)

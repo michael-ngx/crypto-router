@@ -144,7 +144,7 @@ export default function PostTradePage() {
     <div className="flex flex-col gap-6">
       <div>
         <h2 className="text-xl font-semibold text-slate-50">
-          Post-trade analytics
+          Analytics dashboard
         </h2>
         <p className="text-xs text-slate-400">
           View your order history and execution details

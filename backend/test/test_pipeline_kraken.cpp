@@ -3,10 +3,11 @@
 #include <iomanip>
 #include <thread>
 
-#include "pipeline/venue_feed.hpp"
+#include "md/venue_feed.hpp"
 #include "md/symbol_codec.hpp"
 #include "md/book.hpp"
-#include "md/book_parser_kraken.hpp"
+#include "venues/kraken/parser.hpp"
+#include "venues/kraken/ws.hpp"
 
 using KkFeed = VenueFeed<KrakenWs, KrakenBookParser, 4096>;
 
@@ -66,7 +67,7 @@ OPENSSL_PREFIX=$(brew --prefix openssl)
 SIMDJSON_PREFIX=$(brew --prefix simdjson)
 
 clang++ -std=c++20 -O3 -Wall -Wextra \
-  src/ws/ws_kraken.cpp \
+  src/venues/kraken/ws.cpp \
   src/md/symbol_codec.cpp \
   test/test_pipeline_kraken.cpp \
   -I src -I"$SIMDJSON_PREFIX/include" -I"$BOOST_PREFIX/include" -I"$OPENSSL_PREFIX/include" \
