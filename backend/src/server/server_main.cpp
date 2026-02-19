@@ -65,9 +65,13 @@ void load_env_file(const std::string& filepath = ".env") {
         }
         
         // Set environment variable (only if not already set)
-        if (std::getenv(key.c_str()) == nullptr) {
-            setenv(key.c_str(), value.c_str(), 0); // 0 = don't overwrite existing
-        }
+        #ifdef _WIN32
+                if (std::getenv(key.c_str()) == nullptr) {
+                    _putenv_s(key.c_str(), value.c_str());
+                }
+        #else
+                setenv(key.c_str(), value.c_str(), 0); // 0 = don't overwrite existing
+        #endif
     }
 }
 
