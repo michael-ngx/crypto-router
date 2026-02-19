@@ -12,6 +12,7 @@
 #include "util/json_encode.hpp"
 #include "ui/master_feed.hpp"
 #include "server/feed_manager.hpp"
+#include "router/router_service.hpp"
 #include "supabase/auth_utils.hpp"
 #include "order_book/storage.hpp"
 #include <simdjson.h>
@@ -198,7 +199,8 @@ inline void handle_login(const std::string& db_conn_str,
 }
 
 // Handle /api/orders POST endpoint
-inline void handle_create_order(const std::string& db_conn_str,
+inline void handle_create_order(FeedManager& feeds,
+                                const std::string& db_conn_str,
                                 const std::string& request_body,
                                 http::response<http::string_body>& res)
 {
@@ -222,6 +224,11 @@ inline void handle_create_order(const std::string& db_conn_str,
         auto doc = std::move(doc_res.value());
 
         std::string_view user_id_sv, symbol_sv, side_sv, type_sv;
+        
+        /* *************************************************
+         * ************** Parse Order Details **************
+         *************************************************
+        */
 
         // Check for required string fields
         if (doc["user_id"].get(user_id_sv) || doc["symbol"].get(symbol_sv) ||
@@ -321,42 +328,75 @@ inline void handle_create_order(const std::string& db_conn_str,
             limit_price = price;
         }
 
-        pqxx::connection conn(db_conn_str);
-        pqxx::work txn(conn);
+        /* ***********************************
+         * ************** Router **************
+         ***********************************
+        */
+        // TODO: Make router and exchange execution service async.
 
-        // Insert order into database
-        std::string query;
-        pqxx::result result;
-        
-        if (limit_price.has_value()) {
-            query = R"(
-                INSERT INTO public.orders (user_id, symbol, side, order_type, quantity, limit_price, status)
-                VALUES ($1, $2, $3, $4, $5, $6, 'open')
-                RETURNING id
-            )";
-            result = txn.exec(
-                query,
-                pqxx::params(user_id, symbol, side_lower, type_lower, quantity, *limit_price)
-            );
-        } else {
-            query = R"(
-                INSERT INTO public.orders (user_id, symbol, side, order_type, quantity, status)
-                VALUES ($1, $2, $3, $4, $5, 'open')
-                RETURNING id
-            )";
-            result = txn.exec(
-                query,
-                pqxx::params(user_id, symbol, side_lower, type_lower, quantity)
-            );
+        // Grab routing inputs (market data feeds) for the symbol, which also ensures the feed is live and subscribed.
+        RouterService router(feeds, db_conn_str);
+        RouterOrderRequest router_req{
+            user_id,
+            symbol,
+            side_lower,
+            type_lower,
+            quantity,
+            limit_price,
+        };
+
+        auto routed = router.create_order(router_req);
+        // Any error occurs during routing setup (e.g. unsupported symbol / DB issue).
+        if (std::holds_alternative<RouterError>(routed)) {
+            const auto& err = std::get<RouterError>(routed);
+            http::status status = http::status::internal_server_error;
+            if (err.code == RouterErrorCode::SymbolNotSupported) {
+                status = http::status::not_found;
+            } else if (err.code == RouterErrorCode::MarketNoLiquidity) {
+                status = http::status::service_unavailable;
+            }
+            res.result(status);
+            res.set(http::field::content_type, "application/json");
+            std::ostringstream os;
+            os << "{\"error\":\"" << json_escape(err.message) << "\"}";
+            res.body() = os.str();
+            return;
         }
 
-        txn.commit();
+        const auto& result = std::get<RouterOrderResult>(routed);
+        const RoutingDecision& routing = result.routing;
+        const bool has_routable_qty = routing.routable_qty > 0.0;
+        const double remaining_qty =
+            std::max(0.0, routing.requested_qty - routing.routable_qty);
 
-        auto row = result[0];
         std::ostringstream os;
         os << "{"
-           << "\"order_id\":\"" << row[0].as<std::string>() << "\","
-           << "\"status\":\"open\""
+           << "\"order_id\":\"" << result.order_id << "\","
+           << "\"status\":\"" << json_escape(result.status) << "\","
+           << "\"routing\":{"
+           << "\"message\":\"" << json_escape(routing.message) << "\","
+           << "\"fully_routable\":" << (routing.fully_routable ? "true" : "false") << ","
+           << "\"requested_qty\":" << routing.requested_qty << ","
+           << "\"routable_qty\":" << routing.routable_qty << ","
+           << "\"remaining_qty\":" << remaining_qty << ",";
+
+        if (has_routable_qty) {
+            os << "\"indicative_average_price\":" << routing.indicative_average_price << ",";
+        } else {
+            os << "\"indicative_average_price\":null,";
+        }
+
+        os << "\"slices\":[";
+        for (std::size_t i = 0; i < routing.slices.size(); ++i) {
+            if (i > 0) os << ",";
+            os << "{"
+               << "\"venue\":\"" << json_escape(routing.slices[i].venue) << "\","
+               << "\"quantity\":" << routing.slices[i].quantity << ","
+               << "\"price\":" << routing.slices[i].price
+               << "}";
+        }
+        os << "]"
+           << "}"
            << "}";
 
         res.result(http::status::ok);
@@ -700,7 +740,7 @@ inline void handle_request(FeedManager& feeds,
 
     // /api/orders
     if (req.method() == http::verb::post && url.path() == "/api/orders") {
-        handle_create_order(db_conn_str, req.body(), res);
+        handle_create_order(feeds, db_conn_str, req.body(), res);
         return;
     }
 

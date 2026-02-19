@@ -151,11 +151,13 @@ int main() {
     }
 
 
-    /*******************************************************************
-    ***************************  Feed Manager **************************
-     ********************************************************************/
+    /* **********************************************
+    * **************** Feed Manager *****************
+    *************************************************
+    */
 
     // Build VenueRuntime(s) for FeedManager. Each VenueRuntime includes the venue name, its factory, and an API instance
+    // This is done based on the STATIC configuration in venues_config.hpp and STATIC registered factories in VenueRegistry
     const auto& registry = VenueRegistry::instance();
     std::vector<FeedManager::VenueRuntime> venues;
     venues.reserve(kVenueConfigs.size());
@@ -179,7 +181,7 @@ int main() {
     }
 
     // Parse FeedManager options from environment variables
-    // If some options are missing or invalid, use defaults (e.g. empty hot pairs, 180s idle timeout, 15s sweep interval, no prewarm)
+    // If some options are missing or invalid, use defaults (e.g. empty hot pairs, 180s idle timeout, 15s sweep interval, no prewarm all)
     FeedManager::Options feed_opts;
     feed_opts.hot_pairs = parse_csv_env("FEED_HOT_PAIRS");
     feed_opts.idle_timeout = std::chrono::seconds(parse_env_int("FEED_IDLE_SECONDS", 180));
@@ -189,7 +191,7 @@ int main() {
     std::vector<std::string> canonical_pairs(kCanonicalPairs.begin(), kCanonicalPairs.end());  // All supporting canonical pairs from config
     bool prewarm_all = feed_opts.prewarm_all;
 
-    // Create FeedManager instance
+    // Create FeedManager instance, and START
     FeedManager feed_manager(std::move(venues), std::move(canonical_pairs), std::move(feed_opts));
 
     if (prewarm_all) {
@@ -199,9 +201,10 @@ int main() {
     }
 
 
-    /*******************************************************************
-    ***************************  HTTP server **************************
-     ********************************************************************/
+    /* **********************************************
+    * ***************** HTTP Server *****************
+    *************************************************
+    */
     boost::asio::io_context ioc{1};
     tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
