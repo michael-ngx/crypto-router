@@ -67,6 +67,7 @@ SOURCES := src/venues/coinbase/ws.cpp \
            src/md/symbol_codec.cpp \
            src/ui/master_feed.cpp \
            src/server/server_main.cpp
+HEADERS := $(shell find src -name '*.hpp')
 
 # Output
 TARGET := build/server
@@ -75,7 +76,7 @@ TARGET := build/server
 all: check_deps $(TARGET)
 
 # Build the server
-$(TARGET): $(SOURCES)
+$(TARGET): $(SOURCES) $(HEADERS)
 	@mkdir -p build
 	@echo "Building $(TARGET)..."
 	$(CXX) $(CXXFLAGS) $(SOURCES) $(INCLUDES) $(LIBS) $(RPATH) $(DEFINES) -o $(TARGET)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -105,6 +105,20 @@ export default function PostTradePage() {
     }
   };
 
+  const goToOrderDetails = (orderId: string) => {
+    router.push(`/posttrade/details/${encodeURIComponent(orderId)}`);
+  };
+
+  const handleOrderRowKeyDown = (
+    event: KeyboardEvent<HTMLTableRowElement>,
+    orderId: string
+  ) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      goToOrderDetails(orderId);
+    }
+  };
+
   if (authLoading || !isAuthenticated) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
@@ -161,6 +175,12 @@ export default function PostTradePage() {
       order.status === "executing" ||
       order.status === "partially_filled"
   );
+  const pastOrders = orders.filter(
+    (order) =>
+      order.status !== "open" &&
+      order.status !== "executing" &&
+      order.status !== "partially_filled"
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -169,7 +189,10 @@ export default function PostTradePage() {
           Analytics dashboard
         </h2>
         <p className="text-xs text-slate-400">
-          View your order history and execution details
+          View your order history
+        </p>
+        <p className="text-[11px] text-slate-500">
+          Click a row to view order details
         </p>
       </div>
 
@@ -217,7 +240,16 @@ export default function PostTradePage() {
                     Quantity Requested
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-slate-300">
+                    Quantity Filled
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-300">
                     Limit Price
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-300">
+                    Planned Price Avg
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-300">
+                    Avg Fill Price
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-slate-300">
                     Status
@@ -232,7 +264,13 @@ export default function PostTradePage() {
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {openOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-800/50">
+                  <tr
+                    key={order.id}
+                    tabIndex={0}
+                    onClick={() => goToOrderDetails(order.id)}
+                    onKeyDown={(event) => handleOrderRowKeyDown(event, order.id)}
+                    className="cursor-pointer hover:bg-slate-800/50 focus:outline-none focus:ring-1 focus:ring-blue-500/60"
+                  >
                     <td className="px-4 py-3 text-sm text-slate-100">
                       {order.symbol}
                     </td>
@@ -256,9 +294,26 @@ export default function PostTradePage() {
                         maximumFractionDigits: 8,
                       })}
                     </td>
+                    <td className="px-4 py-3 text-sm text-slate-100">
+                      {order.quantity_filled.toLocaleString(undefined, {
+                        maximumFractionDigits: 8,
+                      })}
+                    </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
                       {order.limit_price != null
                         ? order.limit_price.toLocaleString(undefined, {
+                            maximumFractionDigits: 2,
+                          })
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-300">
+                      {order.price_planned_avg.toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-300">
+                      {order.price_filled_avg != null
+                        ? order.price_filled_avg.toLocaleString(undefined, {
                             maximumFractionDigits: 2,
                           })
                         : "—"}
@@ -277,7 +332,11 @@ export default function PostTradePage() {
                     </td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => handleCancelOrder(order.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleCancelOrder(order.id);
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
                         disabled={cancellingOrderId === order.id}
                         className="rounded-full border border-red-500/40 bg-red-950/40 px-3 py-1.5 text-xs font-medium text-red-200 transition-colors hover:bg-red-950/60 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
@@ -292,18 +351,22 @@ export default function PostTradePage() {
         )}
       </section>
 
-      {/* All Orders Section */}
-      {orders.length > 0 && (
-        <section>
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold text-slate-50">
-              All Orders
-            </h3>
-            <p className="text-xs text-slate-400">
-              Complete order history ({orders.length} total)
-            </p>
-          </div>
+      {/* Past Orders Section */}
+      <section>
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold text-slate-50">
+            Past Orders
+          </h3>
+          <p className="text-xs text-slate-400">
+            Completed/terminal order history ({pastOrders.length} total)
+          </p>
+        </div>
 
+        {pastOrders.length === 0 ? (
+          <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-8 text-center">
+            <p className="text-sm text-slate-400">No past orders</p>
+          </div>
+        ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-700 bg-slate-900/50">
             <table className="w-full">
               <thead className="border-b border-slate-700 bg-slate-900/70">
@@ -344,8 +407,14 @@ export default function PostTradePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-800/50">
+                {pastOrders.map((order) => (
+                  <tr
+                    key={order.id}
+                    tabIndex={0}
+                    onClick={() => goToOrderDetails(order.id)}
+                    onKeyDown={(event) => handleOrderRowKeyDown(event, order.id)}
+                    className="cursor-pointer hover:bg-slate-800/50 focus:outline-none focus:ring-1 focus:ring-blue-500/60"
+                  >
                     <td className="px-4 py-3 text-sm text-slate-100">
                       {order.symbol}
                     </td>
@@ -415,8 +484,8 @@ export default function PostTradePage() {
               </tbody>
             </table>
           </div>
-        </section>
-      )}
+        )}
+      </section>
     </div>
   );
 }
