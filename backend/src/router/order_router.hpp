@@ -14,6 +14,7 @@
 
 struct RouteSlice {
     std::string venue;
+    // Aggregated planned amount, and planned average execution price for this venue leg.
     double quantity{0.0};
     double price{0.0};
 };
@@ -51,7 +52,7 @@ inline RoutingDecision route_order_from_books(
     }
 
     struct VenueCursor {
-        std::string venue;
+        const std::string* venue{nullptr};
         Book::LevelCursor cursor;
     };
 
@@ -67,7 +68,7 @@ inline RoutingDecision route_order_from_books(
         Book::LevelCursor cursor = is_buy ? book.ask_cursor() : book.bid_cursor();
         if (!cursor.valid()) continue;
 
-        venue_cursors.push_back(VenueCursor{feed->venue(), std::move(cursor)});
+        venue_cursors.push_back(VenueCursor{&feed->venue(), std::move(cursor)});
     }
 
     if (venue_cursors.empty()) {
@@ -113,6 +114,12 @@ inline RoutingDecision route_order_from_books(
     double remaining = quantity;
     double total_notional = 0.0;
 
+    // Aggregate by venue index directly (faster than hashing by venue string).
+    std::vector<double> venue_qty(venue_cursors.size(), 0.0);
+    std::vector<double> venue_notional(venue_cursors.size(), 0.0);
+    std::vector<std::size_t> touched_venues;
+    touched_venues.reserve(venue_cursors.size());
+
     while (remaining > kEps && !heap.empty()) {
         HeapNode lvl = heap.top();
         heap.pop();
@@ -125,15 +132,11 @@ inline RoutingDecision route_order_from_books(
         const double take_qty = std::min(remaining, lvl.size);
         if (take_qty <= kEps) continue;
 
-        if (!out.slices.empty() &&
-            out.slices.back().venue == venue_cursors[lvl.venue_idx].venue &&
-            std::fabs(out.slices.back().price - lvl.price) <= kEps) {
-            out.slices.back().quantity += take_qty;
-        } else {
-            out.slices.push_back(
-                RouteSlice{venue_cursors[lvl.venue_idx].venue, take_qty, lvl.price}
-            );
+        if (venue_qty[lvl.venue_idx] <= kEps) {
+            touched_venues.push_back(lvl.venue_idx);
         }
+        venue_qty[lvl.venue_idx] += take_qty;
+        venue_notional[lvl.venue_idx] += (take_qty * lvl.price);
 
         remaining -= take_qty;
         total_notional += (take_qty * lvl.price);
@@ -150,6 +153,19 @@ inline RoutingDecision route_order_from_books(
         out.indicative_average_price = total_notional / out.routable_qty;
     }
     out.fully_routable = remaining <= kEps;
+
+    out.slices.reserve(touched_venues.size());
+    for (const auto idx : touched_venues) {
+        const double q = venue_qty[idx];
+        if (q <= kEps) continue;
+        out.slices.push_back(
+            RouteSlice{
+                *venue_cursors[idx].venue,
+                q,
+                venue_notional[idx] / q
+            }
+        );
+    }
 
     if (out.routable_qty <= kEps) {
         out.message = limit_price.has_value()

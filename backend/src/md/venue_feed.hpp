@@ -126,6 +126,10 @@ private:
         std::atomic_store_explicit(&top_, std::move(snap), std::memory_order_release);
     }
 
+
+    /*
+     * Main consumer loop: try_pop from queue, parse, apply to book, publish top-N snapshot.
+    */
     void consume_loop() {
         ParserT parser;
         std::vector<BookEvent> evs;

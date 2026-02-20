@@ -239,27 +239,27 @@ inline void handle_create_order(FeedManager& feeds,
             return;
         }
 
-        // Get qty as a number (can be int or double)
-        double quantity = 0.0;
-        auto qty_val = doc["qty"];
+        // Get quantity_requested as a number
+        double quantity_requested = 0.0;
+        auto qty_val = doc["quantity_requested"];
         if (qty_val.error()) {
             res.result(http::status::bad_request);
             res.set(http::field::content_type, "application/json");
-            res.body() = R"({"error":"missing qty field"})";
+            res.body() = R"({"error":"missing quantity_requested field"})";
             return;
         }
         
         // Try to get as double (handles both int and double)
-        if (qty_val.get_double().get(quantity)) {
+        if (qty_val.get_double().get(quantity_requested)) {
             // If get_double fails, try get_int64
             std::int64_t qty_int = 0;
             if (qty_val.get_int64().get(qty_int)) {
                 res.result(http::status::bad_request);
                 res.set(http::field::content_type, "application/json");
-                res.body() = R"({"error":"qty must be a number"})";
+                res.body() = R"({"error":"quantity_requested must be a number"})";
                 return;
             }
-            quantity = static_cast<double>(qty_int);
+            quantity_requested = static_cast<double>(qty_int);
         }
 
         std::string user_id(user_id_sv);
@@ -289,20 +289,20 @@ inline void handle_create_order(FeedManager& feeds,
             return;
         }
 
-        if (quantity <= 0) {
+        if (quantity_requested <= 0) {
             res.result(http::status::bad_request);
             res.set(http::field::content_type, "application/json");
-            res.body() = R"({"error":"quantity must be positive"})";
+            res.body() = R"({"error":"quantity_requested must be positive"})";
             return;
         }
 
         std::optional<double> limit_price;
         if (type_lower == "limit") {
-            auto price_val = doc["price"];
+            auto price_val = doc["limit_price"];
             if (price_val.error()) {
                 res.result(http::status::bad_request);
                 res.set(http::field::content_type, "application/json");
-                res.body() = R"({"error":"limit orders require a price"})";
+                res.body() = R"({"error":"limit orders require a limit_price"})";
                 return;
             }
             
@@ -313,7 +313,7 @@ inline void handle_create_order(FeedManager& feeds,
                 if (price_val.get_int64().get(price_int)) {
                     res.result(http::status::bad_request);
                     res.set(http::field::content_type, "application/json");
-                    res.body() = R"({"error":"price must be a number"})";
+                    res.body() = R"({"error":"limit price must be a number"})";
                     return;
                 }
                 price = static_cast<double>(price_int);
@@ -322,7 +322,7 @@ inline void handle_create_order(FeedManager& feeds,
             if (price <= 0) {
                 res.result(http::status::bad_request);
                 res.set(http::field::content_type, "application/json");
-                res.body() = R"({"error":"price must be positive"})";
+                res.body() = R"({"error":"limit price must be positive"})";
                 return;
             }
             limit_price = price;
@@ -341,7 +341,7 @@ inline void handle_create_order(FeedManager& feeds,
             symbol,
             side_lower,
             type_lower,
-            quantity,
+            quantity_requested,
             limit_price,
         };
 
@@ -427,7 +427,7 @@ inline void handle_cancel_order(const std::string& db_conn_str,
         pqxx::connection conn(db_conn_str);
         pqxx::work txn(conn);
 
-        // Check if order exists and is cancellable (open or partially_filled)
+        // Check if order exists and is cancellable.
         std::string check_query = R"(
             SELECT id, status
             FROM public.orders
@@ -444,19 +444,23 @@ inline void handle_cancel_order(const std::string& db_conn_str,
         }
 
         std::string current_status = check_result[0][1].as<std::string>();
-        if (current_status != "open" && current_status != "partially_filled") {
+        if (current_status != "open" &&
+            current_status != "executing" &&
+            current_status != "partially_filled") {
             res.result(http::status::bad_request);
             res.set(http::field::content_type, "application/json");
             res.body() = R"({"error":"order cannot be cancelled"})";
             return;
         }
 
-        // Update order status to cancelled and set closed_at
+        // Update order status to cancelled and set terminal timestamp.
         std::string update_query = R"(
             UPDATE public.orders
-            SET status = 'cancelled', closed_at = NOW()
+            SET status = 'cancelled',
+                terminal_at = NOW(),
+                last_updated_at = NOW()
             WHERE id = $1
-            RETURNING id, status, closed_at
+            RETURNING id, status, terminal_at, last_updated_at
         )";
 
         auto result = txn.exec(update_query, pqxx::params(order_id));
@@ -467,7 +471,8 @@ inline void handle_cancel_order(const std::string& db_conn_str,
         os << "{"
            << "\"order_id\":\"" << row[0].as<std::string>() << "\","
            << "\"status\":\"" << json_escape(row[1].as<std::string>()) << "\","
-           << "\"closed_at\":\"" << json_escape(row[2].as<std::string>()) << "\""
+           << "\"terminal_at\":\"" << json_escape(row[2].as<std::string>()) << "\","
+           << "\"last_updated_at\":\"" << json_escape(row[3].as<std::string>()) << "\""
            << "}";
 
         res.result(http::status::ok);
@@ -514,10 +519,13 @@ inline void handle_get_orders(const std::string& db_conn_str,
         pqxx::connection conn(db_conn_str);
         pqxx::work txn(conn);
 
-        // Fetch orders for the user, ordered by created_at descending
+        // Fetch orders for the user, ordered by created_at descending.
         std::string query = R"(
-            SELECT id, symbol, side, order_type, quantity, limit_price, 
-                   average_fill_price, status, created_at, closed_at
+            SELECT id, symbol, side, order_type,
+                   quantity_requested, limit_price,
+                   quantity_planned, price_planned_avg, fully_routable, routing_message,
+                   quantity_filled, price_filled_avg,
+                   status, created_at, execution_started_at, terminal_at, last_updated_at
             FROM public.orders
             WHERE user_id = $1
             ORDER BY created_at DESC
@@ -537,7 +545,7 @@ inline void handle_get_orders(const std::string& db_conn_str,
                << "\"symbol\":\"" << json_escape(row[1].as<std::string>()) << "\","
                << "\"side\":\"" << json_escape(row[2].as<std::string>()) << "\","
                << "\"order_type\":\"" << json_escape(row[3].as<std::string>()) << "\","
-               << "\"quantity\":" << row[4].as<double>() << ",";
+               << "\"quantity_requested\":" << row[4].as<double>() << ",";
 
             if (!row[5].is_null()) {
                 os << "\"limit_price\":" << row[5].as<double>() << ",";
@@ -545,19 +553,42 @@ inline void handle_get_orders(const std::string& db_conn_str,
                 os << "\"limit_price\":null,";
             }
 
-            if (!row[6].is_null()) {
-                os << "\"average_fill_price\":" << row[6].as<double>() << ",";
-            } else {
-                os << "\"average_fill_price\":null,";
-            }
-
-            os << "\"status\":\"" << json_escape(row[7].as<std::string>()) << "\","
-               << "\"created_at\":\"" << json_escape(row[8].as<std::string>()) << "\"";
+            os << "\"quantity_planned\":" << row[6].as<double>() << ","
+               << "\"price_planned_avg\":" << row[7].as<double>() << ","
+               << "\"fully_routable\":" << (row[8].as<bool>() ? "true" : "false") << ",";
 
             if (!row[9].is_null()) {
-                os << ",\"closed_at\":\"" << json_escape(row[9].as<std::string>()) << "\"";
+                os << "\"routing_message\":\"" << json_escape(row[9].as<std::string>()) << "\",";
             } else {
-                os << ",\"closed_at\":null";
+                os << "\"routing_message\":null,";
+            }
+
+            os << "\"quantity_filled\":" << row[10].as<double>() << ",";
+            if (!row[11].is_null()) {
+                os << "\"price_filled_avg\":" << row[11].as<double>() << ",";
+            } else {
+                os << "\"price_filled_avg\":null,";
+            }
+
+            os << "\"status\":\"" << json_escape(row[12].as<std::string>()) << "\","
+               << "\"created_at\":\"" << json_escape(row[13].as<std::string>()) << "\"";
+
+            if (!row[14].is_null()) {
+                os << ",\"execution_started_at\":\"" << json_escape(row[14].as<std::string>()) << "\"";
+            } else {
+                os << ",\"execution_started_at\":null";
+            }
+
+            if (!row[15].is_null()) {
+                os << ",\"terminal_at\":\"" << json_escape(row[15].as<std::string>()) << "\"";
+            } else {
+                os << ",\"terminal_at\":null";
+            }
+
+            if (!row[16].is_null()) {
+                os << ",\"last_updated_at\":\"" << json_escape(row[16].as<std::string>()) << "\"";
+            } else {
+                os << ",\"last_updated_at\":null";
             }
 
             os << "}";
