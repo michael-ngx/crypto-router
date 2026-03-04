@@ -41,3 +41,9 @@ std::string SymbolCodec::to_canonical(const std::string &venue, const std::strin
     }
     return canonize(v);
 }
+
+bool SymbolCodec::is_canonical_pair(const std::string& pair)
+{
+    const std::size_t sep = pair.find('-');
+    return sep != std::string::npos && sep > 0 && sep + 1 < pair.size();
+}

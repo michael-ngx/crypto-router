@@ -83,15 +83,12 @@ public:
         PairRoutingGuard guard;
     };
 
-    FeedManager(std::vector<VenueRuntime> venues,
-                std::vector<std::string> canonical_pairs)
-        : FeedManager(std::move(venues), std::move(canonical_pairs), Options{}) {}
+    FeedManager(std::vector<VenueRuntime> venues)
+        : FeedManager(std::move(venues), Options{}) {}
 
     FeedManager(std::vector<VenueRuntime> venues,
-                std::vector<std::string> canonical_pairs,
                 Options opts)
         : venues_(std::move(venues)),
-          canonical_pairs_(std::move(canonical_pairs)),
           opts_(std::move(opts)) {
         build_support_index();
 
@@ -283,20 +280,33 @@ private:
 
     // Build an index of which venues support which pairs, for efficient lookup when subscribing to feeds and acquiring routing inputs.
     void build_support_index() {
-        for (const auto& pair : canonical_pairs_) {
-            std::vector<std::size_t> supported;
-            for (std::size_t i = 0; i < venues_.size(); ++i) {
-                const auto& venue = venues_[i];
-                if (!venue.factory || !venue.api) continue;
-                if (venue.api->supports_pair(pair)) {
+        std::unordered_map<std::string, std::vector<std::size_t>> tmp_index;
+        std::unordered_set<std::string> seen_pairs;
+
+        for (std::size_t i = 0; i < venues_.size(); ++i) {
+            const auto& venue = venues_[i];
+            if (!venue.factory || !venue.api) continue;
+
+            const auto venue_pairs = venue.api->list_supported_pairs();
+            for (const auto& pair : venue_pairs) {
+                if (pair.empty()) continue;
+
+                auto& supported = tmp_index[pair];
+                if (std::find(supported.begin(), supported.end(), i) == supported.end()) {
                     supported.push_back(i);
                 }
-            }
-            if (!supported.empty()) {
-                support_index_[pair] = std::move(supported);
-                supported_pairs_.push_back(pair);
+                if (seen_pairs.insert(pair).second) {
+                    supported_pairs_.push_back(pair);
+                }
             }
         }
+
+        for (auto& [pair, supported] : tmp_index) {
+            if (supported.empty()) continue;
+            support_index_[pair] = std::move(supported);
+        }
+
+        std::sort(supported_pairs_.begin(), supported_pairs_.end());
     }
 
     bool can_sweep() const {
@@ -353,9 +363,8 @@ private:
     }
 
     std::vector<VenueRuntime> venues_;
-    std::vector<std::string> canonical_pairs_;
-    std::unordered_map<std::string, std::vector<std::size_t>> support_index_;
-    std::vector<std::string> supported_pairs_;
+    std::unordered_map<std::string, std::vector<std::size_t>> support_index_;  // symbol -> list of venue indices that support it
+    std::vector<std::string> supported_pairs_;  // List of all supported pairs across venues, for listing and pre-warming
     std::unordered_set<std::string> hot_pairs_;
     Options opts_;
 

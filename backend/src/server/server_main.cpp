@@ -14,7 +14,6 @@
 
 #include "server/feed_manager.hpp"
 #include "venues/venue_registry.hpp"
-#include "server/pairs_config.hpp"
 #include "server/venues_config.hpp"
 #include "server/http_server.hpp"
 #include "server/http_routes.hpp"
@@ -188,11 +187,10 @@ int main() {
     feed_opts.sweep_interval = std::chrono::seconds(parse_env_int("FEED_SWEEP_SECONDS", 15));
     feed_opts.prewarm_all = parse_env_bool("FEED_PREWARM_ALL", false);
 
-    std::vector<std::string> canonical_pairs(kCanonicalPairs.begin(), kCanonicalPairs.end());  // All supporting canonical pairs from config
     bool prewarm_all = feed_opts.prewarm_all;
 
     // Create FeedManager instance, and START
-    FeedManager feed_manager(std::move(venues), std::move(canonical_pairs), std::move(feed_opts));
+    FeedManager feed_manager(std::move(venues), std::move(feed_opts));
 
     if (prewarm_all) {
         feed_manager.start_all_supported();

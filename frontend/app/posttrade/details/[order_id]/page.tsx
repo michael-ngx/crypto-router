@@ -135,6 +135,10 @@ function isFailureTerminal(status: string): boolean {
   return status === "failed" || status === "cancelled" || status === "expired";
 }
 
+function isActivelyExecuting(status: string): boolean {
+  return status === "open" || status === "executing" || status === "partially_filled";
+}
+
 export default function OrderDetailsPage() {
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const router = useRouter();
@@ -158,7 +162,15 @@ export default function OrderDetailsPage() {
     if (authLoading || !isAuthenticated || !user || !orderId) return;
 
     let cancelled = false;
-    const fetchDetails = async (backgroundRefresh: boolean) => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let refreshInFlight = false;
+
+    const shouldPoll = (currentOrder: OrderDetails) =>
+      currentOrder.terminal_at == null && isActivelyExecuting(currentOrder.status);
+
+    const fetchDetails = async (
+      backgroundRefresh: boolean
+    ): Promise<OrderDetails | null> => {
       if (backgroundRefresh) {
         setIsRefreshing(true);
       } else {
@@ -176,14 +188,16 @@ export default function OrderDetailsPage() {
           throw new Error(err.error || `HTTP ${response.status}`);
         }
         const data: OrderDetailsResponse = await response.json();
-        if (cancelled) return;
+        if (cancelled) return null;
         setOrder(data.order);
         setLegs(data.legs || []);
+        return data.order;
       } catch (err: unknown) {
-        if (cancelled) return;
+        if (cancelled) return null;
         const msg =
           err instanceof Error ? err.message : "Failed to fetch order details";
         setError(msg);
+        return null;
       } finally {
         if (!cancelled) {
           if (backgroundRefresh) {
@@ -195,13 +209,36 @@ export default function OrderDetailsPage() {
       }
     };
 
-    void fetchDetails(false);
-    const interval = setInterval(() => {
-      void fetchDetails(true);
-    }, 5000);
+    const startPolling = () => {
+      if (interval) return;
+      interval = setInterval(() => {
+        if (refreshInFlight) return;
+        refreshInFlight = true;
+        void (async () => {
+          const latestOrder = await fetchDetails(true);
+          refreshInFlight = false;
+          if (!latestOrder || cancelled) return;
+          if (!shouldPoll(latestOrder) && interval) {
+            clearInterval(interval);
+            interval = null;
+          }
+        })();
+      }, 5000);
+    };
+
+    void (async () => {
+      const initialOrder = await fetchDetails(false);
+      if (!initialOrder || cancelled) return;
+      if (shouldPoll(initialOrder)) {
+        startPolling();
+      }
+    })();
+
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (interval) {
+        clearInterval(interval);
+      }
     };
   }, [authLoading, isAuthenticated, user, orderId]);
 
