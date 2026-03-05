@@ -5,9 +5,13 @@
 
 int main() {
     // Sandbox credentials
-    std::string api_key = "";
-    std::string api_secret = "";  // base64 encoded
-    std::string passphrase = "";
+    //std::string api_key = "";
+    //std::string api_secret = "";  // base64 encoded
+    //std::string passphrase = "";
+
+    std::string api_key = "1ab9d3c73fd8c106bb6d22360997cf47";
+    std::string api_secret = "pTyE9q8QHh0GuW02V+Na6+8mEIAgx5dpOQnfn9pIOutNZgc3280Oqb/UEXOyMJ2wPkFLIc18thrWyY3FcGw3LQ==";  // base64 encoded
+    std::string passphrase = "eb8i00hy4ise";
 
     CoinbaseRest client(api_key, api_secret, passphrase, true);
 
