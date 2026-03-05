@@ -50,6 +50,7 @@ public:
     void start_ws(const std::string& venue_symbol, unsigned short port = 443) override {
         // Build WS with a lightweight callback that only enqueues strings
         ws_ = std::make_unique<WsT>(venue_symbol, [this](const std::string& raw){
+            last_transport_ns_.store(now_ns(), std::memory_order_release);
             std::string msg(raw);
             if (!queue_.try_push(std::move(msg))) {
                 switch (backpressure_) {
@@ -90,6 +91,14 @@ public:
     // Atomic load for UI/router readers (lock-free)
     std::shared_ptr<const TopSnapshot> load_top() const noexcept override {
         return std::atomic_load_explicit(&top_, std::memory_order_acquire);
+    }
+
+    std::int64_t last_transport_ns() const noexcept override {
+        return last_transport_ns_.load(std::memory_order_acquire);
+    }
+
+    std::int64_t last_book_update_ns() const noexcept override {
+        return last_book_update_ns_.load(std::memory_order_acquire);
     }
     
     // Identity
@@ -146,6 +155,7 @@ private:
             // parser should parse full events; no depth limit here
             if (parser.parse(raw, evs)) {
                 book_.apply_many(evs);
+                last_book_update_ns_.store(now_ns(), std::memory_order_release);
                 publish_top(top_depth_); // publish after every applied batch
             }
         }
@@ -155,6 +165,7 @@ private:
             evs.clear();
             if (parser.parse(raw, evs)) {
                 book_.apply_many(evs);
+                last_book_update_ns_.store(now_ns(), std::memory_order_release);
                 publish_top(top_depth_);
             }
         }
@@ -174,6 +185,8 @@ private:
 
     // Published Top-N view (immutable via shared_ptr)
     std::shared_ptr<const TopSnapshot> top_{nullptr};
+    std::atomic<std::int64_t> last_transport_ns_{0};
+    std::atomic<std::int64_t> last_book_update_ns_{0};
     std::size_t top_depth_; // requested published depth
 
     Book book_;

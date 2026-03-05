@@ -74,6 +74,13 @@ struct CoinbaseWs::Impl
                             + "\",\"product_ids\":[\"" + product + "\"]}";
             ws->write(net::buffer(sub)  );
 
+            // Subscribe to Coinbase heartbeats so illiquid pairs can still be
+            // considered transport-live even when no L2 updates are emitted.
+            // Docs: https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-channels
+            std::string hb_sub = std::string("{\"type\":\"subscribe\",\"channel\":\"heartbeats\"")
+                               + ",\"product_ids\":[\"" + product + "\"]}";
+            ws->write(net::buffer(hb_sub));
+
             // Loop to read messages from websocket, calling on_msg callback for each message received
             beast::flat_buffer buffer;
             while (!stop_flag.load(std::memory_order_relaxed))

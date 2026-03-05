@@ -13,6 +13,7 @@ export type BookResponse = {
   };
   last_updated_ms?: number | null;
   symbol: string;
+  venues?: string[];
   bids: OrderLevel[];
   asks: OrderLevel[];
 };

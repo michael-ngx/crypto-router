@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <memory>
 #include <string>
 #include "book.hpp"
@@ -17,4 +18,8 @@ struct IVenueFeed {
     
     // Lock-free atomic read of this venue’s current published top-N.
     virtual std::shared_ptr<const TopSnapshot> load_top() const noexcept = 0;
+
+    // Monotonic timestamps for feed liveness signals.
+    virtual std::int64_t last_transport_ns() const noexcept = 0;
+    virtual std::int64_t last_book_update_ns() const noexcept = 0;
 };
