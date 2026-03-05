@@ -1,10 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -34,15 +36,59 @@ public:
         bool prewarm_all{false};
     };
 
-    FeedManager(std::vector<VenueRuntime> venues,
-                std::vector<std::string> canonical_pairs)
-        : FeedManager(std::move(venues), std::move(canonical_pairs), Options{}) {}
+    // RAII guard that keeps a pair from being swept while routing/execution is in-flight.
+    class PairRoutingGuard {
+    public:
+        PairRoutingGuard() = default;
+        PairRoutingGuard(const PairRoutingGuard&) = delete;
+        PairRoutingGuard& operator=(const PairRoutingGuard&) = delete;
+
+        PairRoutingGuard(PairRoutingGuard&& other) noexcept
+            : manager_(other.manager_), symbol_(std::move(other.symbol_)) {
+            other.manager_ = nullptr;
+        }
+
+        PairRoutingGuard& operator=(PairRoutingGuard&& other) noexcept {
+            if (this != &other) {
+                reset();
+                manager_ = other.manager_;
+                symbol_ = std::move(other.symbol_);
+                other.manager_ = nullptr;
+            }
+            return *this;
+        }
+
+        ~PairRoutingGuard() { reset(); }
+
+        bool valid() const noexcept { return manager_ != nullptr; }
+
+    private:
+        friend class FeedManager;
+        PairRoutingGuard(FeedManager* manager, std::string symbol)
+            : manager_(manager), symbol_(std::move(symbol)) {}
+
+        void reset() {
+            if (!manager_) return;
+            manager_->release_routing_hold(symbol_);
+            manager_ = nullptr;
+            symbol_.clear();
+        }
+
+        FeedManager* manager_{nullptr};
+        std::string symbol_;
+    };
+
+    struct RoutingInputs {
+        std::vector<std::shared_ptr<IVenueFeed>> feeds;
+        PairRoutingGuard guard;
+    };
+
+    FeedManager(std::vector<VenueRuntime> venues)
+        : FeedManager(std::move(venues), Options{}) {}
 
     FeedManager(std::vector<VenueRuntime> venues,
-                std::vector<std::string> canonical_pairs,
                 Options opts)
         : venues_(std::move(venues)),
-          canonical_pairs_(std::move(canonical_pairs)),
           opts_(std::move(opts)) {
         build_support_index();
 
@@ -70,11 +116,15 @@ public:
 
     ~FeedManager() { shutdown(); }
 
+
+
+
     std::shared_ptr<UIMasterFeed> get_or_subscribe(const std::string& symbol) {
         const auto now = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lk(m_);
 
         auto it = entries_.find(symbol);
+        // Entry already exists for the symbol, just return it and update last access time (and pin if it's a hot pair)
         if (it != entries_.end()) {
             it->second.last_access = now;
             if (hot_pairs_.count(symbol)) {
@@ -88,6 +138,7 @@ public:
             return nullptr;
         }
 
+        // No entry exists for the symbol. If it's supported by at least one venue - create feeds, subscribe, and return
         Entry entry;
         entry.symbol = symbol;
         entry.ui = std::make_shared<UIMasterFeed>(symbol);
@@ -142,6 +193,28 @@ public:
         return supported_pairs_;
     }
 
+    // Expose live data feeds for the requesting symbol for routing
+    // Also take a routing hold to prevent the pair from being swept while routing/execution is in-flight.
+    std::optional<RoutingInputs> acquire_routing_inputs(const std::string& symbol) {
+        // Ensure pair is loaded and subscribed before taking a routing hold.
+        auto ui = get_or_subscribe(symbol);
+        if (!ui) return std::nullopt;
+
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lk(m_);
+
+        auto it = entries_.find(symbol);
+        if (it == entries_.end()) return std::nullopt;
+
+        it->second.last_access = now;
+        ++it->second.inflight_routing;
+
+        RoutingInputs out;
+        out.feeds = it->second.feeds;
+        out.guard = PairRoutingGuard(this, symbol);
+        return out;
+    }
+
     void start_hot() {
         for (const auto& pair : hot_pairs_) {
             (void)get_or_subscribe(pair);
@@ -190,23 +263,50 @@ private:
         std::vector<std::shared_ptr<IVenueFeed>> feeds;
         std::chrono::steady_clock::time_point last_access{};
         bool pinned{false};
+        std::size_t inflight_routing{0};
     };
 
+    // Called by PairRoutingGuard when it goes out of scope, to release the inflight routing hold on the pair and allow it to be swept if idle.
+    void release_routing_hold(const std::string& symbol) {
+        std::lock_guard<std::mutex> lk(m_);
+        auto it = entries_.find(symbol);
+        if (it == entries_.end()) return;
+        if (it->second.inflight_routing > 0) {
+            --it->second.inflight_routing;
+        }
+        // Give a fresh grace window after routing/execution completes.
+        it->second.last_access = std::chrono::steady_clock::now();
+    }
+
+    // Build an index of which venues support which pairs, for efficient lookup when subscribing to feeds and acquiring routing inputs.
     void build_support_index() {
-        for (const auto& pair : canonical_pairs_) {
-            std::vector<std::size_t> supported;
-            for (std::size_t i = 0; i < venues_.size(); ++i) {
-                const auto& venue = venues_[i];
-                if (!venue.factory || !venue.api) continue;
-                if (venue.api->supports_pair(pair)) {
+        std::unordered_map<std::string, std::vector<std::size_t>> tmp_index;
+        std::unordered_set<std::string> seen_pairs;
+
+        for (std::size_t i = 0; i < venues_.size(); ++i) {
+            const auto& venue = venues_[i];
+            if (!venue.factory || !venue.api) continue;
+
+            const auto venue_pairs = venue.api->list_supported_pairs();
+            for (const auto& pair : venue_pairs) {
+                if (pair.empty()) continue;
+
+                auto& supported = tmp_index[pair];
+                if (std::find(supported.begin(), supported.end(), i) == supported.end()) {
                     supported.push_back(i);
                 }
-            }
-            if (!supported.empty()) {
-                support_index_[pair] = std::move(supported);
-                supported_pairs_.push_back(pair);
+                if (seen_pairs.insert(pair).second) {
+                    supported_pairs_.push_back(pair);
+                }
             }
         }
+
+        for (auto& [pair, supported] : tmp_index) {
+            if (supported.empty()) continue;
+            support_index_[pair] = std::move(supported);
+        }
+
+        std::sort(supported_pairs_.begin(), supported_pairs_.end());
     }
 
     bool can_sweep() const {
@@ -215,6 +315,7 @@ private:
     }
 
     // Background loop that periodically checks for non-hot pairs that have been idle for too long and stops their feeds
+    // Note that if a pair is in-flight for routing/execution, it will be protected from sweeping until the routing hold is released
     void sweep_loop() {
         while (running_.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(opts_.sweep_interval);
@@ -227,6 +328,10 @@ private:
                 std::lock_guard<std::mutex> lk(m_);
                 for (auto it = entries_.begin(); it != entries_.end();) {
                     if (it->second.pinned) {
+                        ++it;
+                        continue;
+                    }
+                    if (it->second.inflight_routing > 0) {
                         ++it;
                         continue;
                     }
@@ -258,9 +363,8 @@ private:
     }
 
     std::vector<VenueRuntime> venues_;
-    std::vector<std::string> canonical_pairs_;
-    std::unordered_map<std::string, std::vector<std::size_t>> support_index_;
-    std::vector<std::string> supported_pairs_;
+    std::unordered_map<std::string, std::vector<std::size_t>> support_index_;  // symbol -> list of venue indices that support it
+    std::vector<std::string> supported_pairs_;  // List of all supported pairs across venues, for listing and pre-warming
     std::unordered_set<std::string> hot_pairs_;
     Options opts_;
 

@@ -7,4 +7,6 @@ struct SymbolCodec
     static std::string to_venue(const std::string &venue, const std::string &canonical);
     // Convert venue format ("BTC/USD") to canonical ("BTC-USD").
     static std::string to_canonical(const std::string &venue, const std::string &venue_sym);
+    // Validate canonical pair format "BASE-QUOTE".
+    static bool is_canonical_pair(const std::string& pair);
 };

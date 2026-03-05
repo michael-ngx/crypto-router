@@ -50,13 +50,13 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
         symbol,
         side: side.toLowerCase(),
         type: orderType.toLowerCase(),
-        qty: qtyNum,
+        quantity_requested: qtyNum,
         user_id: user.user_id,
       };
 
-      // Only include price for limit orders
+      // Only include limit_price for limit orders.
       if (orderType === "LIMIT") {
-        orderData.price = parseFloat(price);
+        orderData.limit_price = parseFloat(price);
       }
 
       const response = await fetch(`${API_BASE_URL}/api/orders`, {
@@ -166,7 +166,6 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
           <input
             type="number"
             step="any"
-            min="0"
             value={qty}
             onChange={(e) => setQty(e.target.value)}
             required
@@ -181,7 +180,6 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
             <input
               type="number"
               step="any"
-              min="0"
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               required={orderType === "LIMIT"}
@@ -224,4 +222,3 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
     </form>
   );
 }
-
