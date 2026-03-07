@@ -15,7 +15,7 @@ enum class BookOp : uint8_t
     Delete = 1
 };
 
-struct BookDelta
+struct BookEventDelta
 {
     std::string venue;  // "Coinbase", "Kraken"
     std::string symbol; // canonical "BTC-USD"
@@ -27,13 +27,13 @@ struct BookDelta
     std::int64_t ts_ns{0};
 };
 
-struct BookSnapshot
+struct BookEventSnapshot
 {
     std::string venue;  // venue id
     std::string symbol; // canonical
     // We encode snapshot as a vector of deltas (Upsert) you can apply in order.
-    std::vector<BookDelta> levels;
+    std::vector<BookEventDelta> levels;
     std::int64_t ts_ns{0};
 };
 
-using BookEvent = std::variant<BookSnapshot, BookDelta>;
+using BookEvent = std::variant<BookEventSnapshot, BookEventDelta>;

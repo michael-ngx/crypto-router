@@ -13,7 +13,7 @@ inline VenueFactory make_kraken_factory() {
     factory.make_feed = [](const std::string& canonical) -> std::shared_ptr<IVenueFeed> {
         using Feed = VenueFeed<KrakenWs, KrakenBookParser>;
         return std::make_shared<Feed>(
-            "Kraken", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
+            "Kraken", canonical, Backpressure::DropOldest);
     };
     factory.make_api = []() -> std::unique_ptr<IVenueApi> {
         return std::make_unique<KrakenVenueApi>();

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../contexts/AuthContext";
+import { formatDynamicPrice, truncateDisplay } from "@/lib/priceFormat";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
@@ -169,6 +170,13 @@ export default function PostTradePage() {
     }
   };
 
+  const renderSummaryPrice = (value: number | null) => {
+    if (value == null) return "—";
+    const full = formatDynamicPrice(value);
+    const display = truncateDisplay(full, 12);
+    return <span title={full}>{display}</span>;
+  };
+
   const openOrders = orders.filter(
     (order) =>
       order.status === "open" ||
@@ -300,23 +308,13 @@ export default function PostTradePage() {
                       })}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {order.limit_price != null
-                        ? order.limit_price.toLocaleString(undefined, {
-                            maximumFractionDigits: 2,
-                          })
-                        : "—"}
+                      {renderSummaryPrice(order.limit_price)}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {order.price_planned_avg.toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}
+                      {renderSummaryPrice(order.price_planned_avg)}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {order.price_filled_avg != null
-                        ? order.price_filled_avg.toLocaleString(undefined, {
-                            maximumFractionDigits: 2,
-                          })
-                        : "—"}
+                      {renderSummaryPrice(order.price_filled_avg)}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -444,23 +442,13 @@ export default function PostTradePage() {
                       })}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {order.limit_price != null
-                        ? order.limit_price.toLocaleString(undefined, {
-                            maximumFractionDigits: 2,
-                          })
-                        : "—"}
+                      {renderSummaryPrice(order.limit_price)}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {order.price_planned_avg.toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}
+                      {renderSummaryPrice(order.price_planned_avg)}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-300">
-                      {order.price_filled_avg != null
-                        ? order.price_filled_avg.toLocaleString(undefined, {
-                            maximumFractionDigits: 2,
-                          })
-                        : "—"}
+                      {renderSummaryPrice(order.price_filled_avg)}
                     </td>
                     <td className="px-4 py-3">
                       <span

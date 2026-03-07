@@ -1,5 +1,7 @@
 "use client";
 
+import { formatDynamicPrice } from "@/lib/priceFormat";
+
 export type OrderLevel = {
   price: number;
   size: number;
@@ -13,6 +15,7 @@ export type BookResponse = {
   };
   last_updated_ms?: number | null;
   symbol: string;
+  venues?: string[];
   bids: OrderLevel[];
   asks: OrderLevel[];
 };
@@ -69,14 +72,6 @@ function formatSize(x: number): string {
   const s = x.toFixed(decimals);
   // Trim trailing zeros and possible trailing dot
   return s.replace(/0+$/, "").replace(/\.$/, "");
-}
-
-// Format price display with 2 decimal places and thousands separator
-function formatPrice(x: number): string {
-  return x.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 }
 
 // Get badge color classes based on venue name
@@ -191,12 +186,12 @@ export function ConsolidatedOrderBook({ book, lastUpdated }: Props) {
                     ) : null}
                   </td>
                   <td className="px-3 py-1.5 align-middle text-[11px] text-slate-800">
-                    {bid ? formatPrice(bid.price) : ""}
+                    {bid ? formatDynamicPrice(bid.price) : ""}
                   </td>
 
                   {/* Asks right */}
                   <td className="px-3 py-1.5 align-middle text-right text-[11px] text-red-500">
-                    {ask ? formatPrice(ask.price) : ""}
+                    {ask ? formatDynamicPrice(ask.price) : ""}
                   </td>
                   <td className="px-3 py-1.5 align-middle">
                     {ask ? (

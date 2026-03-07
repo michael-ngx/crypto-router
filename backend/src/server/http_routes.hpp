@@ -781,6 +781,9 @@ inline void handle_book(FeedManager& feeds,
                         const urls::url_view& url,
                         http::response<http::string_body>& res)
 {
+    // Maximum UI depth accepted by /api/book.
+    constexpr std::size_t MAX_TOP_DEPTH = 50;
+
     std::size_t depth = MAX_TOP_DEPTH;
     std::string symbol;
 
@@ -827,7 +830,11 @@ inline void handle_book(FeedManager& feeds,
     os << "\"status\":{";
     os << "\"code\":" << (snap.is_cold ? 503 : 200) << ",";
     os << "\"message\":\""
-       << (snap.is_cold ? "Market data stale: all venues cold" : "OK")
+       << (snap.is_cold
+               ? "Market data transport stale: all venues cold"
+               : (snap.is_quiet
+                      ? "Market data quiet: transport alive, no recent book updates"
+                      : "OK"))
        << "\"";
     os << "},";
     if (snap.last_updated_ms > 0) {
@@ -836,31 +843,16 @@ inline void handle_book(FeedManager& feeds,
         os << "\"last_updated_ms\":null,";
     }
     os << "\"symbol\":\"" << json_escape(snap.symbol) << "\",";
+    os << "\"venues\":[";
+    for (std::size_t i = 0; i < snap.venues.size(); ++i) {
+        if (i > 0) os << ",";
+        os << "\"" << json_escape(snap.venues[i]) << "\"";
+    }
+    os << "],";
 
     // Consolidated ladders with venue information for UI
     os << "\"bids\":"; json_ladder_array(os, snap.bids); os << ",";
-    os << "\"asks\":"; json_ladder_array(os, snap.asks); os << ",";
-
-    // Per-venue snapshots (still useful for debugging / side panels)
-    os << "\"per_venue\":{";
-    bool first = true;
-    for (const auto& kv : snap.per_venue) {
-        const auto& venue_name = kv.first;
-        const auto& sp = kv.second;
-        if (!sp) continue;
-
-        if (!first) os << ",";
-        first = false;
-
-        os << "\"" << json_escape(venue_name) << "\":{";
-        os << "\"venue\":\""  << json_escape(sp->venue)  << "\",";
-        os << "\"symbol\":\"" << json_escape(sp->symbol) << "\",";
-        os << "\"ts_ns\":"    << sp->ts_ns << ",";
-        os << "\"bids\":"; json_pair_array(os, sp->bids); os << ",";
-        os << "\"asks\":"; json_pair_array(os, sp->asks);
-        os << "}";
-    }
-    os << "}"; // per_venue
+    os << "\"asks\":"; json_ladder_array(os, snap.asks);
     os << "}"; // root object
 
     res.set(http::field::content_type, "application/json");

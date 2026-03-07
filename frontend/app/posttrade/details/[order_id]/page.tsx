@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "../../../../contexts/AuthContext";
+import { formatDynamicPrice } from "@/lib/priceFormat";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
@@ -74,7 +75,7 @@ function formatQty(v: number | null): string {
 
 function formatPx(v: number | null): string {
   if (v == null) return "N/A";
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatDynamicPrice(v);
 }
 
 function toneClasses(tone: StageTone): string {
