@@ -3,10 +3,8 @@
 import { useEffect, useState, useCallback, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../contexts/AuthContext";
+import { API_BASE_URL } from "@/lib/api";
 import { formatDynamicPrice, truncateDisplay } from "@/lib/priceFormat";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 interface Order {
   id: string;

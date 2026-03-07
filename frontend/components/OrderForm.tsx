@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useAuth } from "../contexts/AuthContext";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+import { API_BASE_URL } from "@/lib/api";
 
 interface OrderFormProps {
   symbol?: string;
@@ -46,7 +45,14 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
         }
       }
 
-      const orderData: any = {
+      const orderData: {
+        symbol: string;
+        side: string;
+        type: string;
+        quantity_requested: number;
+        user_id: string;
+        limit_price?: number;
+      } = {
         symbol,
         side: side.toLowerCase(),
         type: orderType.toLowerCase(),
@@ -83,8 +89,8 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
       if (onOrderCreated) {
         onOrderCreated(result.order_id);
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to create order");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create order");
     } finally {
       setIsSubmitting(false);
     }
@@ -192,7 +198,7 @@ export function OrderForm({ symbol = "BTC-USD", onOrderCreated }: OrderFormProps
 
       {!isAuthenticated && (
         <div className="rounded-lg border border-yellow-500/40 bg-yellow-950/40 px-3 py-2 text-xs text-yellow-200">
-          Please <a href="/login" className="underline">login</a> to place orders
+          Please <Link href="/?auth=login" className="underline">login</Link> to place orders
         </div>
       )}
 

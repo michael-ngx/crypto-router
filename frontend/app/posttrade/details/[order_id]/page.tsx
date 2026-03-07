@@ -4,10 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "../../../../contexts/AuthContext";
+import { API_BASE_URL } from "@/lib/api";
 import { formatDynamicPrice } from "@/lib/priceFormat";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 type StageTone = "complete" | "current" | "upcoming" | "failed";
 

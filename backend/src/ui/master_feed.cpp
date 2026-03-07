@@ -62,11 +62,15 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
     std::vector<std::shared_ptr<const BookSnapshot>> connected_snapshots;
     connected_snapshots.reserve(states.size());
     bool has_connected_transport = false;
+    bool has_seen_transport = false;
     bool has_recent_book_update = false;
 
     // Keep feeds with active transport; mark "quiet" if transport is alive but
     // no recent book updates have arrived.
     for (const auto& state : states) {
+        if (state.last_transport_ns > 0) {
+            has_seen_transport = true;
+        }
         if (state.last_transport_ns <= 0) continue;
         if (now - state.last_transport_ns > kTransportStaleNs) continue;
 
@@ -87,6 +91,10 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
     }
 
     if (!has_connected_transport) {
+        if (!has_seen_transport) {
+            out.is_warming = true;
+            return out;
+        }
         out.is_cold = true;
         return out;
     }

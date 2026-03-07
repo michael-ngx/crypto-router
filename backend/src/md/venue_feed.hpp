@@ -1,7 +1,6 @@
 #pragma once
 #include <algorithm>
 #include <atomic>
-#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
