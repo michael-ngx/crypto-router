@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -28,9 +29,9 @@ struct RoutingDecision {
     std::string message;
 };
 
-// Computes the best venue split for an order from full per-venue books.
+// Computes the best venue split for an order from immutable per-venue routing snapshots.
 // Complexity: O(K log V) where V is number of venues and K is total depth consumed until fill across venues
-inline RoutingDecision route_order_from_books(
+inline RoutingDecision route_order_from_snapshots(
     const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
     const std::string& side_lower,
     double quantity,
@@ -51,27 +52,62 @@ inline RoutingDecision route_order_from_books(
         return out;
     }
 
-    struct VenueCursor {
+    struct SnapshotCursor {
         const std::string* venue{nullptr};
-        Book::LevelCursor cursor;
+        const std::vector<BookSnapshotLevel>* levels{nullptr};
+        std::uint64_t seq{0};
+        std::size_t idx{0};
+
+        bool valid() const noexcept {
+            return levels != nullptr && idx < levels->size();
+        }
+
+        double price() const noexcept {
+            if (!valid()) return 0.0;
+            return (*levels)[idx].price;
+        }
+
+        double size() const noexcept {
+            if (!valid()) return 0.0;
+            return (*levels)[idx].size;
+        }
+
+        void next() noexcept {
+            if (!valid()) return;
+            ++idx;
+        }
     };
 
+    // Hold shared_ptr lifetime while routing.
+    std::vector<std::shared_ptr<const BookSnapshot>> snapshots;
+    snapshots.reserve(feeds.size());
 
-    // Fill vector of venue cursors
-    std::vector<VenueCursor> venue_cursors;
-    venue_cursors.reserve(feeds.size());
+    std::vector<SnapshotCursor> snapshot_cursors;
+    snapshot_cursors.reserve(feeds.size());
 
     for (const auto& feed : feeds) {
         if (!feed) continue;
 
-        const auto& book = feed->book();
-        Book::LevelCursor cursor = is_buy ? book.ask_cursor() : book.bid_cursor();
-        if (!cursor.valid()) continue;
+        auto snapshot = feed->load_snapshot();
+        if (!snapshot) continue;
 
-        venue_cursors.push_back(VenueCursor{&feed->venue(), std::move(cursor)});
+        const auto& side = is_buy ? snapshot->asks : snapshot->bids;
+        if (side.empty()) continue;
+
+        snapshots.push_back(std::move(snapshot));
+        const auto& held_snapshot = snapshots.back();
+
+        snapshot_cursors.push_back(
+            SnapshotCursor{
+                &held_snapshot->venue,
+                &(is_buy ? held_snapshot->asks : held_snapshot->bids),
+                held_snapshot->seq,
+                0
+            }
+        );
     }
 
-    if (venue_cursors.empty()) {
+    if (snapshot_cursors.empty()) {
         out.message = "no liquidity available";
         return out;
     }
@@ -82,6 +118,7 @@ inline RoutingDecision route_order_from_books(
         std::size_t venue_idx{0};
         double price{0.0};
         double size{0.0};
+        std::uint64_t seq{0};
     };
     struct HeapCompare {
         bool is_buy{true};
@@ -91,7 +128,9 @@ inline RoutingDecision route_order_from_books(
                 return is_buy ? a.price > b.price : a.price < b.price;
             }
             // Prefer larger resting size for tie-break.
-            return a.size < b.size;
+            if (a.size != b.size) return a.size < b.size;
+            // Tie-break with fresher published snapshot.
+            return a.seq < b.seq;
         }
     };
 
@@ -101,9 +140,9 @@ inline RoutingDecision route_order_from_books(
     );
 
     // Initialize heap with the top of each venue's book
-    for (std::size_t i = 0; i < venue_cursors.size(); ++i) {
-        auto& c = venue_cursors[i].cursor;
-        heap.push(HeapNode{i, c.price(), c.size()});
+    for (std::size_t i = 0; i < snapshot_cursors.size(); ++i) {
+        auto& cursor = snapshot_cursors[i];
+        heap.push(HeapNode{i, cursor.price(), cursor.size(), cursor.seq});
     }
 
     if (heap.empty()) {
@@ -115,10 +154,10 @@ inline RoutingDecision route_order_from_books(
     double total_notional = 0.0;
 
     // Aggregate by venue index directly (faster than hashing by venue string).
-    std::vector<double> venue_qty(venue_cursors.size(), 0.0);
-    std::vector<double> venue_notional(venue_cursors.size(), 0.0);
+    std::vector<double> venue_qty(snapshot_cursors.size(), 0.0);
+    std::vector<double> venue_notional(snapshot_cursors.size(), 0.0);
     std::vector<std::size_t> touched_venues;
-    touched_venues.reserve(venue_cursors.size());
+    touched_venues.reserve(snapshot_cursors.size());
 
     while (remaining > kEps && !heap.empty()) {
         HeapNode lvl = heap.top();
@@ -141,10 +180,10 @@ inline RoutingDecision route_order_from_books(
         remaining -= take_qty;
         total_notional += (take_qty * lvl.price);
 
-        auto& src = venue_cursors[lvl.venue_idx].cursor;
-        src.next();
-        if (src.valid()) {
-            heap.push(HeapNode{lvl.venue_idx, src.price(), src.size()});
+        auto& cursor = snapshot_cursors[lvl.venue_idx];
+        cursor.next();
+        if (cursor.valid()) {
+            heap.push(HeapNode{lvl.venue_idx, cursor.price(), cursor.size(), cursor.seq});
         }
     }
 
@@ -160,7 +199,7 @@ inline RoutingDecision route_order_from_books(
         if (q <= kEps) continue;
         out.slices.push_back(
             RouteSlice{
-                *venue_cursors[idx].venue,
+                *snapshot_cursors[idx].venue,
                 q,
                 venue_notional[idx] / q
             }
@@ -172,7 +211,7 @@ inline RoutingDecision route_order_from_books(
             ? "no liquidity matched the limit price"
             : "no liquidity available";
     } else if (out.fully_routable) {
-        out.message = "fully routable from current books";
+        out.message = "fully routable from current snapshots";
     } else {
         out.message = limit_price.has_value()
             ? "partially routable: limit-constrained liquidity"

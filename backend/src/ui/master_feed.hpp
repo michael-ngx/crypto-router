@@ -38,7 +38,8 @@ struct UIConsolidated {
 };
 
 // UIMasterFeed collects IVenueFeed readers and builds a consolidated ladder
-// by merging their TopSnapshot objects. Thread-safe for add/get.
+// by merging top levels from immutable per-venue BookSnapshot objects.
+// Thread-safe for add/get.
 class UIMasterFeed {
 public:
     explicit UIMasterFeed(std::string canonical_symbol)

@@ -781,6 +781,9 @@ inline void handle_book(FeedManager& feeds,
                         const urls::url_view& url,
                         http::response<http::string_body>& res)
 {
+    // Maximum UI depth accepted by /api/book.
+    constexpr std::size_t MAX_TOP_DEPTH = 50;
+
     std::size_t depth = MAX_TOP_DEPTH;
     std::string symbol;
 

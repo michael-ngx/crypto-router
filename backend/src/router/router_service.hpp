@@ -65,7 +65,7 @@ public:
         /* ***********************************
          * CALCULATE ROUTING PATH
          ************************************/
-        RoutingDecision routing = route_order_from_books(
+        RoutingDecision routing = route_order_from_snapshots(
             routing_inputs->feeds,
             req.side_lower,
             req.quantity_requested,

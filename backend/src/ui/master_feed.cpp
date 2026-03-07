@@ -29,7 +29,7 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
 
     struct FeedState {
         std::string venue;
-        std::shared_ptr<const TopSnapshot> top;
+        std::shared_ptr<const BookSnapshot> snapshot;
         std::int64_t last_transport_ns{0};
         std::int64_t last_book_update_ns{0};
     };
@@ -42,7 +42,7 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         for (auto& f : feeds_) {
             states.push_back(FeedState{
                 f->venue(),
-                f->load_top(),               // atomic top snapshot
+                f->load_snapshot(),          // atomic book snapshot
                 f->last_transport_ns(),      // monotonic transport liveness
                 f->last_book_update_ns(),    // monotonic book update recency
             });
@@ -59,8 +59,8 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
     std::sort(out.venues.begin(), out.venues.end());
 
     const auto now = now_ns();
-    std::vector<std::shared_ptr<const TopSnapshot>> connected_snaps;
-    connected_snaps.reserve(states.size());
+    std::vector<std::shared_ptr<const BookSnapshot>> connected_snapshots;
+    connected_snapshots.reserve(states.size());
     bool has_connected_transport = false;
     bool has_recent_book_update = false;
 
@@ -76,13 +76,13 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
             has_recent_book_update = true;
         }
 
-        auto& sp = state.top;
-        if (!sp) continue;
-        if (sp->ts_ns <= 0) continue;
+        auto& snapshot = state.snapshot;
+        if (!snapshot) continue;
+        if (snapshot->ts_ns <= 0) continue;
 
-        connected_snaps.push_back(sp);
-        if (sp->ts_ms > out.last_updated_ms) {
-            out.last_updated_ms = sp->ts_ms;
+        connected_snapshots.push_back(snapshot);
+        if (snapshot->ts_ms > out.last_updated_ms) {
+            out.last_updated_ms = snapshot->ts_ms;
         }
     }
 
@@ -93,23 +93,26 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
 
     out.is_quiet = !has_recent_book_update;
 
-    if (connected_snaps.empty()) {
+    if (connected_snapshots.empty()) {
         return out;
     }
 
     // Flatten all per-venue ladders into a single list with venue info.
     std::vector<UILadderLevel> all_bids;
     std::vector<UILadderLevel> all_asks;
-    all_bids.reserve(connected_snaps.size() * depth);
-    all_asks.reserve(connected_snaps.size() * depth);
+    all_bids.reserve(connected_snapshots.size() * depth);
+    all_asks.reserve(connected_snapshots.size() * depth);
 
-    for (auto& sp : connected_snaps) {
-
-        for (const auto& [px, sz] : sp->bids) {
-            all_bids.push_back(UILadderLevel{sp->venue, px, sz});
+    for (auto& snapshot : connected_snapshots) {
+        std::size_t taken_bids = 0;
+        for (const auto& lvl : snapshot->bids) {
+            if (taken_bids++ >= depth) break;
+            all_bids.push_back(UILadderLevel{snapshot->venue, lvl.price, lvl.size});
         }
-        for (const auto& [px, sz] : sp->asks) {
-            all_asks.push_back(UILadderLevel{sp->venue, px, sz});
+        std::size_t taken_asks = 0;
+        for (const auto& lvl : snapshot->asks) {
+            if (taken_asks++ >= depth) break;
+            all_asks.push_back(UILadderLevel{snapshot->venue, lvl.price, lvl.size});
         }
     }
 

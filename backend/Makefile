@@ -1,7 +1,7 @@
 # Makefile for crypto-router backend
 
 # Homebrew dependencies
-BREW_DEPS := boost openssl simdjson libpq libpqxx
+BREW_DEPS := boost openssl@3 simdjson libpq libpqxx
 
 .DEFAULT_GOAL := all
 
@@ -15,7 +15,7 @@ check_deps:
 	@echo "Checking required Homebrew packages..."
 	@missing=0; \
 	for pkg in $(BREW_DEPS); do \
-		if ! brew list --versions $$pkg >/dev/null 2>&1; then \
+		if ! brew --prefix $$pkg >/dev/null 2>&1; then \
 			echo "  - Missing: $$pkg"; \
 			missing=1; \
 		fi; \
@@ -33,7 +33,7 @@ check_deps:
 
 # Detect library prefixes
 BOOST_PREFIX := $(shell brew --prefix boost 2>/dev/null || echo "/usr/local")
-OPENSSL_PREFIX := $(shell brew --prefix openssl 2>/dev/null || echo "/usr/local")
+OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null || echo "/usr/local")
 SIMDJSON_PREFIX := $(shell brew --prefix simdjson 2>/dev/null || echo "/usr/local")
 PQXX_PREFIX := $(shell brew --prefix libpqxx 2>/dev/null || echo "/usr/local")
 PQ_PREFIX := $(shell brew --prefix libpq 2>/dev/null || echo "/usr/local")

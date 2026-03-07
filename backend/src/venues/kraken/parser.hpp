@@ -55,7 +55,7 @@ public:
             const std::string canonical = SymbolCodec::to_canonical("kraken", std::string(sym_sv));
 
             if (type_sv == "snapshot") {
-                BookSnapshot snap;
+                BookEventSnapshot snap;
                 snap.venue  = "Kraken";
                 snap.symbol = canonical;
                 snap.ts_ns  = now_ns;
@@ -88,7 +88,7 @@ private:
                           const std::string& canonical,
                           BookSide side,
                           std::int64_t ts_ns,
-                          std::vector<BookDelta>& levels) {
+                          std::vector<BookEventDelta>& levels) {
         auto arr_res = obj[key].get_array();
         if (arr_res.error()) return;
         auto arr = arr_res.value();
@@ -101,7 +101,7 @@ private:
             if (level["price"].get(px)) continue;
             if (level["qty"].get(qty)) continue;
 
-            BookDelta d;
+            BookEventDelta d;
             d.venue  = "Kraken";
             d.symbol = canonical;
             d.side   = side;
@@ -132,7 +132,7 @@ private:
             if (level["price"].get(px)) continue;
             if (level["qty"].get(qty)) continue;
 
-            BookDelta d;
+            BookEventDelta d;
             d.venue  = "Kraken";
             d.symbol = canonical;
             d.side   = side;

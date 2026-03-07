@@ -13,7 +13,7 @@ inline VenueFactory make_coinbase_factory() {
     factory.make_feed = [](const std::string& canonical) -> std::shared_ptr<IVenueFeed> {
         using Feed = VenueFeed<CoinbaseWs, CoinbaseBookParser>;
         return std::make_shared<Feed>(
-            "Coinbase", canonical, Backpressure::DropOldest, MAX_TOP_DEPTH);
+            "Coinbase", canonical, Backpressure::DropOldest);
     };
     factory.make_api = []() -> std::unique_ptr<IVenueApi> {
         return std::make_unique<CoinbaseVenueApi>();
