@@ -20,7 +20,7 @@ export function formatDynamicPrice(
   if (abs >= 1) {
     return value.toLocaleString(undefined, {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 3,
     });
   }
 
@@ -29,13 +29,6 @@ export function formatDynamicPrice(
   const firstNonZero = fractional.search(/[1-9]/);
   if (firstNonZero < 0) {
     return "0.00";
-  }
-
-  if (firstNonZero <= 1) {
-    return value.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
   }
 
   const fractionDigits = Math.min(

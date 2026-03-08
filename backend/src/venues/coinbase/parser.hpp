@@ -108,11 +108,12 @@ private:
         return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
     }
     static double fast_atof(std::string_view sv) {
-        // robust and fast enough; avoids locale pitfalls
-        char* end = nullptr;
-        std::string tmp(sv); // small strings SSO, big strings still cheap vs parsing
-        double v = std::strtod(tmp.c_str(), &end);
-        return (end == tmp.c_str()) ? 0.0 : v;
+        constexpr std::size_t kBufSize = 32;
+        if (sv.empty() || sv.size() >= kBufSize) return 0.0;
+        char buf[kBufSize];
+        sv.copy(buf, sv.size());
+        buf[sv.size()] = '\0';
+        return std::strtod(buf, nullptr);
     }
 
     simdjson::ondemand::parser parser_;

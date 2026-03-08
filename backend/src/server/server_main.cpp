@@ -11,12 +11,14 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+#include <string_view>
 
 #include "server/feed_manager.hpp"
 #include "venues/venue_registry.hpp"
 #include "server/venues_config.hpp"
 #include "server/http_server.hpp"
 #include "server/http_routes.hpp"
+#include "router/router_framework.hpp"
 #include "supabase/storage_supabase.hpp"
 
 using tcp = boost::asio::ip::tcp;
@@ -188,6 +190,18 @@ int main() {
 
     bool prewarm_all = feed_opts.prewarm_all;
 
+    const char* router_version_env = std::getenv("ROUTER_VERSION");
+    const std::string_view requested_router_version =
+        router_version_env ? std::string_view(router_version_env)
+                           : std::string_view{};
+
+    if (router_version_env &&
+        !router::is_router_version_supported(requested_router_version)) {
+        std::cerr << "[router] Unknown ROUTER_VERSION='" << router_version_env
+                  << "', falling back to default strategy." << std::endl;
+    }
+    const router::RouterVersionId router_version = router::resolve_router_version_id(requested_router_version);
+
     // Create FeedManager instance, and START
     FeedManager feed_manager(std::move(venues), std::move(feed_opts));
 
@@ -202,10 +216,13 @@ int main() {
     * ***************** HTTP Server *****************
     *************************************************
     */
-    boost::asio::io_context ioc{1};
+    boost::asio::io_context ioc{1};   // TODO: Make multiple HTTP threads
     tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
+    std::cout << "[router] Active strategy: "
+              << router::router_version_name(router_version)
+              << std::endl;
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(feed_manager, db_conn_str, req, res);
+      handle_request(feed_manager, db_conn_str, router_version, req, res);
     }};
     server.run();
 
