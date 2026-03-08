@@ -9,6 +9,7 @@
 
 #include "server/feed_manager.hpp"
 #include "router/order_router.hpp"
+#include "supabase/storage_supabase.hpp"
 
 struct RouterOrderRequest {
     std::string user_id;
@@ -108,7 +109,7 @@ public:
         const double price_planned_avg = routing.indicative_average_price;
 
         try {
-            pqxx::connection conn(db_conn_str_);
+            pqxx::connection conn(supabase::with_connect_timeout(db_conn_str_));
             pqxx::work txn(conn);
             pqxx::result result;
 

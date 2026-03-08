@@ -1,0 +1,981 @@
+#include "server/http_routes.hpp"
+
+#include <boost/url.hpp>
+#include <boost/beast/http.hpp>
+#include <string_view>
+#include <string>
+#include <optional>
+#include <algorithm>
+#include <sstream>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+#include "util/json_encode.hpp"
+#include "ui/master_feed.hpp"
+#include "server/feed_manager.hpp"
+#include "router/router_service.hpp"
+#include "supabase/auth_utils.hpp"
+#include "supabase/storage_supabase.hpp"
+#include <simdjson.h>
+#include <pqxx/pqxx>
+
+namespace http  = boost::beast::http;
+namespace urls  = boost::urls;
+
+namespace {
+
+// Handle /api/auth/signup endpoint
+void handle_signup(const std::string& db_conn_str,
+                          const std::string& request_body,
+                          http::response<http::string_body>& res)
+{
+    if (db_conn_str.empty()) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"database not configured"})";
+        return;
+    }
+
+    try {
+        simdjson::padded_string pj(request_body);
+        simdjson::ondemand::parser parser;
+        auto doc_res = parser.iterate(pj);
+        if (doc_res.error()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"invalid json"})";
+            return;
+        }
+        auto doc = std::move(doc_res.value());
+
+        std::string_view email_sv, password_sv, first_name_sv, last_name_sv;
+        if (doc["email"].get(email_sv) || doc["password"].get(password_sv) ||
+            doc["first_name"].get(first_name_sv) || doc["last_name"].get(last_name_sv)) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"missing required fields"})";
+            return;
+        }
+
+        std::string email(email_sv);
+        std::string password(password_sv);
+        std::string first_name(first_name_sv);
+        std::string last_name(last_name_sv);
+
+        if (password.length() < 6) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"password must be at least 6 characters"})";
+            return;
+        }
+
+        pqxx::connection conn(supabase::with_connect_timeout(db_conn_str));
+        pqxx::work txn(conn);
+
+        // Check if user already exists
+        auto check_result = txn.exec(
+            "SELECT id FROM public.users WHERE email = $1",
+            pqxx::params(email)
+        );
+        if (!check_result.empty()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"email already exists"})";
+            return;
+        }
+
+        // Hash password and insert user
+        std::string hashed_password = hash_password(password);
+        auto result = txn.exec(
+            R"(
+                INSERT INTO public.users (email, password, first_name, last_name)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, email, first_name, last_name
+            )",
+            pqxx::params(email, hashed_password, first_name, last_name)
+        );
+        txn.commit();
+
+        auto row = result[0];
+        std::ostringstream os;
+        os << "{"
+           << "\"user_id\":\"" << row[0].as<std::string>() << "\","
+           << "\"email\":\"" << json_escape(row[1].as<std::string>()) << "\","
+           << "\"first_name\":\"" << json_escape(row[2].as<std::string>()) << "\","
+           << "\"last_name\":\"" << json_escape(row[3].as<std::string>()) << "\""
+           << "}";
+
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = os.str();
+    } catch (const std::exception& e) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        std::ostringstream os;
+        os << "{\"error\":\"" << json_escape(e.what()) << "\"}";
+        res.body() = os.str();
+    }
+}
+
+// Handle /api/auth/login endpoint
+void handle_login(const std::string& db_conn_str,
+                         const std::string& request_body,
+                         http::response<http::string_body>& res)
+{
+    if (db_conn_str.empty()) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"database not configured"})";
+        return;
+    }
+
+    try {
+        simdjson::padded_string pj(request_body);
+        simdjson::ondemand::parser parser;
+        auto doc_res = parser.iterate(pj);
+        if (doc_res.error()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"invalid json"})";
+            return;
+        }
+        auto doc = std::move(doc_res.value());
+
+        std::string_view email_sv, password_sv;
+        if (doc["email"].get(email_sv) || doc["password"].get(password_sv)) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"missing email or password"})";
+            return;
+        }
+
+        std::string email(email_sv);
+        std::string password(password_sv);
+
+        pqxx::connection conn(supabase::with_connect_timeout(db_conn_str));
+        pqxx::work txn(conn);
+
+        auto result = txn.exec(
+            R"(
+                SELECT id, email, password, first_name, last_name
+                FROM public.users
+                WHERE email = $1
+            )",
+            pqxx::params(email)
+        );
+
+        if (result.empty()) {
+            res.result(http::status::unauthorized);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"invalid email or password"})";
+            return;
+        }
+
+        auto row = result[0];
+        std::string stored_hash = row[2].as<std::string>();
+
+        if (!verify_password(password, stored_hash)) {
+            res.result(http::status::unauthorized);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"invalid email or password"})";
+            return;
+        }
+
+        std::ostringstream os;
+        os << "{"
+           << "\"user_id\":\"" << row[0].as<std::string>() << "\","
+           << "\"email\":\"" << json_escape(row[1].as<std::string>()) << "\","
+           << "\"first_name\":\"" << json_escape(row[3].as<std::string>()) << "\","
+           << "\"last_name\":\"" << json_escape(row[4].as<std::string>()) << "\""
+           << "}";
+
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = os.str();
+    } catch (const std::exception& e) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        std::ostringstream os;
+        os << "{\"error\":\"" << json_escape(e.what()) << "\"}";
+        res.body() = os.str();
+    }
+}
+
+// Handle /api/orders POST endpoint
+void handle_create_order(FeedManager& feeds,
+                                const std::string& db_conn_str,
+                                const std::string& request_body,
+                                http::response<http::string_body>& res)
+{
+    if (db_conn_str.empty()) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"database not configured"})";
+        return;
+    }
+
+    try {
+        simdjson::padded_string pj(request_body);
+        simdjson::ondemand::parser parser;
+        auto doc_res = parser.iterate(pj);
+        if (doc_res.error()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"invalid json"})";
+            return;
+        }
+        auto doc = std::move(doc_res.value());
+
+        std::string_view user_id_sv, symbol_sv, side_sv, type_sv;
+        
+        /* *************************************************
+         * ************** Parse Order Details **************
+         *************************************************
+        */
+
+        // Check for required string fields
+        if (doc["user_id"].get(user_id_sv) || doc["symbol"].get(symbol_sv) ||
+            doc["side"].get(side_sv) || doc["type"].get(type_sv)) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"missing required fields"})";
+            return;
+        }
+
+        // Get quantity_requested as a number
+        double quantity_requested = 0.0;
+        auto qty_val = doc["quantity_requested"];
+        if (qty_val.error()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"missing quantity_requested field"})";
+            return;
+        }
+        
+        // Try to get as double (handles both int and double)
+        if (qty_val.get_double().get(quantity_requested)) {
+            // If get_double fails, try get_int64
+            std::int64_t qty_int = 0;
+            if (qty_val.get_int64().get(qty_int)) {
+                res.result(http::status::bad_request);
+                res.set(http::field::content_type, "application/json");
+                res.body() = R"({"error":"quantity_requested must be a number"})";
+                return;
+            }
+            quantity_requested = static_cast<double>(qty_int);
+        }
+
+        std::string user_id(user_id_sv);
+        std::string symbol(symbol_sv);
+        std::string side_str(side_sv);
+        std::string type_str(type_sv);
+
+        // Convert side to lowercase for database enum
+        std::string side_lower = side_str;
+        std::transform(side_lower.begin(), side_lower.end(), side_lower.begin(), ::tolower);
+
+        // Convert type to lowercase for database enum
+        std::string type_lower = type_str;
+        std::transform(type_lower.begin(), type_lower.end(), type_lower.begin(), ::tolower);
+
+        if (side_lower != "buy" && side_lower != "sell") {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"side must be 'buy' or 'sell'"})";
+            return;
+        }
+
+        if (type_lower != "market" && type_lower != "limit") {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"type must be 'market' or 'limit'"})";
+            return;
+        }
+
+        if (quantity_requested <= 0) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"quantity_requested must be positive"})";
+            return;
+        }
+
+        std::optional<double> limit_price;
+        if (type_lower == "limit") {
+            auto price_val = doc["limit_price"];
+            if (price_val.error()) {
+                res.result(http::status::bad_request);
+                res.set(http::field::content_type, "application/json");
+                res.body() = R"({"error":"limit orders require a limit_price"})";
+                return;
+            }
+            
+            double price = 0.0;
+            if (price_val.get_double().get(price)) {
+                // Try as int64 if double fails
+                std::int64_t price_int = 0;
+                if (price_val.get_int64().get(price_int)) {
+                    res.result(http::status::bad_request);
+                    res.set(http::field::content_type, "application/json");
+                    res.body() = R"({"error":"limit price must be a number"})";
+                    return;
+                }
+                price = static_cast<double>(price_int);
+            }
+            
+            if (price <= 0) {
+                res.result(http::status::bad_request);
+                res.set(http::field::content_type, "application/json");
+                res.body() = R"({"error":"limit price must be positive"})";
+                return;
+            }
+            limit_price = price;
+        }
+
+        /* ***********************************
+         * ************** Router **************
+         ***********************************
+        */
+        // TODO: Make router and exchange execution service async.
+
+        // Grab routing inputs (market data feeds) for the symbol, which also ensures the feed is live and subscribed.
+        RouterService router(feeds, db_conn_str);
+        RouterOrderRequest router_req{
+            user_id,
+            symbol,
+            side_lower,
+            type_lower,
+            quantity_requested,
+            limit_price,
+        };
+
+        auto routed = router.create_order(router_req);
+        // Any error occurs during routing setup (e.g. unsupported symbol / DB issue).
+        if (std::holds_alternative<RouterError>(routed)) {
+            const auto& err = std::get<RouterError>(routed);
+            http::status status = http::status::internal_server_error;
+            if (err.code == RouterErrorCode::SymbolNotSupported) {
+                status = http::status::not_found;
+            } else if (err.code == RouterErrorCode::MarketNoLiquidity) {
+                status = http::status::service_unavailable;
+            }
+            res.result(status);
+            res.set(http::field::content_type, "application/json");
+            std::ostringstream os;
+            os << "{\"error\":\"" << json_escape(err.message) << "\"}";
+            res.body() = os.str();
+            return;
+        }
+
+        const auto& result = std::get<RouterOrderResult>(routed);
+        const RoutingDecision& routing = result.routing;
+        const bool has_routable_qty = routing.routable_qty > 0.0;
+        const double remaining_qty =
+            std::max(0.0, routing.requested_qty - routing.routable_qty);
+
+        std::ostringstream os;
+        os << "{"
+           << "\"order_id\":\"" << result.order_id << "\","
+           << "\"status\":\"" << json_escape(result.status) << "\","
+           << "\"routing\":{"
+           << "\"message\":\"" << json_escape(routing.message) << "\","
+           << "\"fully_routable\":" << (routing.fully_routable ? "true" : "false") << ","
+           << "\"requested_qty\":" << routing.requested_qty << ","
+           << "\"routable_qty\":" << routing.routable_qty << ","
+           << "\"remaining_qty\":" << remaining_qty << ",";
+
+        if (has_routable_qty) {
+            os << "\"indicative_average_price\":" << routing.indicative_average_price << ",";
+        } else {
+            os << "\"indicative_average_price\":null,";
+        }
+
+        os << "\"slices\":[";
+        for (std::size_t i = 0; i < routing.slices.size(); ++i) {
+            if (i > 0) os << ",";
+            os << "{"
+               << "\"venue\":\"" << json_escape(routing.slices[i].venue) << "\","
+               << "\"quantity\":" << routing.slices[i].quantity << ","
+               << "\"price\":" << routing.slices[i].price
+               << "}";
+        }
+        os << "]"
+           << "}"
+           << "}";
+
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = os.str();
+    } catch (const std::exception& e) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        std::ostringstream os;
+        os << "{\"error\":\"" << json_escape(e.what()) << "\"}";
+        res.body() = os.str();
+    }
+}
+
+// Handle /api/orders/:id PATCH endpoint (cancel an order)
+void handle_cancel_order(const std::string& db_conn_str,
+                                const std::string& order_id,
+                                http::response<http::string_body>& res)
+{
+    if (db_conn_str.empty()) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"database not configured"})";
+        return;
+    }
+
+    try {
+        pqxx::connection conn(supabase::with_connect_timeout(db_conn_str));
+        pqxx::work txn(conn);
+
+        // Check if order exists and is cancellable.
+        std::string check_query = R"(
+            SELECT id, status
+            FROM public.orders
+            WHERE id = $1
+        )";
+
+        auto check_result = txn.exec(check_query, pqxx::params(order_id));
+        
+        if (check_result.empty()) {
+            res.result(http::status::not_found);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"order not found"})";
+            return;
+        }
+
+        std::string current_status = check_result[0][1].as<std::string>();
+        if (current_status != "open" &&
+            current_status != "executing" &&
+            current_status != "partially_filled") {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"order cannot be cancelled"})";
+            return;
+        }
+
+        // Update order status to cancelled and set terminal timestamp.
+        std::string update_query = R"(
+            UPDATE public.orders
+            SET status = 'cancelled',
+                terminal_at = NOW(),
+                last_updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, status, terminal_at, last_updated_at
+        )";
+
+        auto result = txn.exec(update_query, pqxx::params(order_id));
+        txn.commit();
+
+        auto row = result[0];
+        std::ostringstream os;
+        os << "{"
+           << "\"order_id\":\"" << row[0].as<std::string>() << "\","
+           << "\"status\":\"" << json_escape(row[1].as<std::string>()) << "\","
+           << "\"terminal_at\":\"" << json_escape(row[2].as<std::string>()) << "\","
+           << "\"last_updated_at\":\"" << json_escape(row[3].as<std::string>()) << "\""
+           << "}";
+
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = os.str();
+    } catch (const std::exception& e) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        std::ostringstream os;
+        os << "{\"error\":\"" << json_escape(e.what()) << "\"}";
+        res.body() = os.str();
+    }
+}
+
+// Handle /api/orders GET endpoint (fetch orders for a user)
+void handle_get_orders(const std::string& db_conn_str,
+                              const urls::url_view& url,
+                              http::response<http::string_body>& res)
+{
+    if (db_conn_str.empty()) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"database not configured"})";
+        return;
+    }
+
+    try {
+        // Get user_id from query parameters
+        std::string user_id;
+        for (auto const& p : url.params()) {
+            if (p.key == "user_id") {
+                user_id = std::string(p.value);
+                break;
+            }
+        }
+
+        if (user_id.empty()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"user_id parameter required"})";
+            return;
+        }
+
+        pqxx::connection conn(supabase::with_connect_timeout(db_conn_str));
+        pqxx::work txn(conn);
+
+        // Fetch orders for the user, ordered by created_at descending.
+        std::string query = R"(
+            SELECT id, symbol, side, order_type,
+                   quantity_requested, limit_price,
+                   quantity_planned, price_planned_avg, fully_routable, routing_message,
+                   quantity_filled, price_filled_avg,
+                   status, created_at, execution_started_at, terminal_at, last_updated_at
+            FROM public.orders
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+        )";
+
+        auto result = txn.exec(query, pqxx::params(user_id));
+
+        std::ostringstream os;
+        os << "{\"orders\":[";
+        bool first = true;
+        for (const auto& row : result) {
+            if (!first) os << ",";
+            first = false;
+
+            os << "{"
+               << "\"id\":\"" << row[0].as<std::string>() << "\","
+               << "\"symbol\":\"" << json_escape(row[1].as<std::string>()) << "\","
+               << "\"side\":\"" << json_escape(row[2].as<std::string>()) << "\","
+               << "\"order_type\":\"" << json_escape(row[3].as<std::string>()) << "\","
+               << "\"quantity_requested\":" << row[4].as<double>() << ",";
+
+            if (!row[5].is_null()) {
+                os << "\"limit_price\":" << row[5].as<double>() << ",";
+            } else {
+                os << "\"limit_price\":null,";
+            }
+
+            os << "\"quantity_planned\":" << row[6].as<double>() << ","
+               << "\"price_planned_avg\":" << row[7].as<double>() << ","
+               << "\"fully_routable\":" << (row[8].as<bool>() ? "true" : "false") << ",";
+
+            if (!row[9].is_null()) {
+                os << "\"routing_message\":\"" << json_escape(row[9].as<std::string>()) << "\",";
+            } else {
+                os << "\"routing_message\":null,";
+            }
+
+            os << "\"quantity_filled\":" << row[10].as<double>() << ",";
+            if (!row[11].is_null()) {
+                os << "\"price_filled_avg\":" << row[11].as<double>() << ",";
+            } else {
+                os << "\"price_filled_avg\":null,";
+            }
+
+            os << "\"status\":\"" << json_escape(row[12].as<std::string>()) << "\","
+               << "\"created_at\":\"" << json_escape(row[13].as<std::string>()) << "\"";
+
+            if (!row[14].is_null()) {
+                os << ",\"execution_started_at\":\"" << json_escape(row[14].as<std::string>()) << "\"";
+            } else {
+                os << ",\"execution_started_at\":null";
+            }
+
+            if (!row[15].is_null()) {
+                os << ",\"terminal_at\":\"" << json_escape(row[15].as<std::string>()) << "\"";
+            } else {
+                os << ",\"terminal_at\":null";
+            }
+
+            if (!row[16].is_null()) {
+                os << ",\"last_updated_at\":\"" << json_escape(row[16].as<std::string>()) << "\"";
+            } else {
+                os << ",\"last_updated_at\":null";
+            }
+
+            os << "}";
+        }
+        os << "]}";
+
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = os.str();
+    } catch (const std::exception& e) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        std::ostringstream os;
+        os << "{\"error\":\"" << json_escape(e.what()) << "\"}";
+        res.body() = os.str();
+    }
+}
+
+// Handle /api/orders/:id/details?user_id=...
+void handle_get_order_details(const std::string& db_conn_str,
+                                     const std::string& order_id,
+                                     const urls::url_view& url,
+                                     http::response<http::string_body>& res)
+{
+    if (db_conn_str.empty()) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"database not configured"})";
+        return;
+    }
+
+    try {
+        std::string user_id;
+        for (auto const& p : url.params()) {
+            if (p.key == "user_id") {
+                user_id = std::string(p.value);
+                break;
+            }
+        }
+
+        if (user_id.empty()) {
+            res.result(http::status::bad_request);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"user_id parameter required"})";
+            return;
+        }
+
+        pqxx::connection conn(supabase::with_connect_timeout(db_conn_str));
+        pqxx::work txn(conn);
+
+        std::string order_query = R"(
+            SELECT id, user_id, symbol, side, order_type,
+                   quantity_requested, limit_price,
+                   quantity_planned, price_planned_avg, fully_routable, routing_message,
+                   quantity_filled, price_filled_avg,
+                   status, failure_code, failure_message,
+                   created_at, execution_started_at, terminal_at, last_updated_at
+            FROM public.orders
+            WHERE id = $1 AND user_id = $2
+            LIMIT 1
+        )";
+        auto order_result = txn.exec(order_query, pqxx::params(order_id, user_id));
+        if (order_result.empty()) {
+            res.result(http::status::not_found);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error":"order not found"})";
+            return;
+        }
+
+        std::string legs_query = R"(
+            SELECT id, venue, status,
+                   quantity_planned, limit_price, price_planned,
+                   quantity_submitted, price_submitted,
+                   quantity_filled, price_filled_avg,
+                   client_order_id, venue_order_id,
+                   error_code, error_message,
+                   created_at, submitted_at, acknowledged_at,
+                   first_fill_at, last_fill_at, terminal_at, last_updated_at
+            FROM public.order_legs
+            WHERE order_id = $1
+            ORDER BY created_at ASC, venue ASC
+        )";
+        auto legs_result = txn.exec(legs_query, pqxx::params(order_id));
+
+        const auto row = order_result[0];
+        std::ostringstream os;
+        os << "{";
+        os << "\"order\":{";
+        os << "\"id\":\"" << row[0].as<std::string>() << "\",";
+        os << "\"user_id\":\"" << row[1].as<std::string>() << "\",";
+        os << "\"symbol\":\"" << json_escape(row[2].as<std::string>()) << "\",";
+        os << "\"side\":\"" << json_escape(row[3].as<std::string>()) << "\",";
+        os << "\"order_type\":\"" << json_escape(row[4].as<std::string>()) << "\",";
+        os << "\"quantity_requested\":" << row[5].as<double>() << ",";
+
+        if (!row[6].is_null()) os << "\"limit_price\":" << row[6].as<double>() << ",";
+        else                   os << "\"limit_price\":null,";
+
+        os << "\"quantity_planned\":" << row[7].as<double>() << ",";
+        os << "\"price_planned_avg\":" << row[8].as<double>() << ",";
+        os << "\"fully_routable\":" << (row[9].as<bool>() ? "true" : "false") << ",";
+
+        if (!row[10].is_null()) os << "\"routing_message\":\"" << json_escape(row[10].as<std::string>()) << "\",";
+        else                    os << "\"routing_message\":null,";
+
+        os << "\"quantity_filled\":" << row[11].as<double>() << ",";
+        if (!row[12].is_null()) os << "\"price_filled_avg\":" << row[12].as<double>() << ",";
+        else                    os << "\"price_filled_avg\":null,";
+
+        os << "\"status\":\"" << json_escape(row[13].as<std::string>()) << "\",";
+
+        if (!row[14].is_null()) os << "\"failure_code\":\"" << json_escape(row[14].as<std::string>()) << "\",";
+        else                    os << "\"failure_code\":null,";
+
+        if (!row[15].is_null()) os << "\"failure_message\":\"" << json_escape(row[15].as<std::string>()) << "\",";
+        else                    os << "\"failure_message\":null,";
+
+        os << "\"created_at\":\"" << json_escape(row[16].as<std::string>()) << "\",";
+        if (!row[17].is_null()) os << "\"execution_started_at\":\"" << json_escape(row[17].as<std::string>()) << "\",";
+        else                    os << "\"execution_started_at\":null,";
+
+        if (!row[18].is_null()) os << "\"terminal_at\":\"" << json_escape(row[18].as<std::string>()) << "\",";
+        else                    os << "\"terminal_at\":null,";
+
+        if (!row[19].is_null()) os << "\"last_updated_at\":\"" << json_escape(row[19].as<std::string>()) << "\"";
+        else                    os << "\"last_updated_at\":null";
+        os << "},";
+
+        os << "\"legs\":[";
+        bool first_leg = true;
+        for (const auto& leg : legs_result) {
+            if (!first_leg) os << ",";
+            first_leg = false;
+
+            os << "{";
+            os << "\"id\":\"" << leg[0].as<std::string>() << "\",";
+            os << "\"venue\":\"" << json_escape(leg[1].as<std::string>()) << "\",";
+            os << "\"status\":\"" << json_escape(leg[2].as<std::string>()) << "\",";
+            os << "\"quantity_planned\":" << leg[3].as<double>() << ",";
+            if (!leg[4].is_null()) os << "\"limit_price\":" << leg[4].as<double>() << ",";
+            else                   os << "\"limit_price\":null,";
+            os << "\"price_planned\":" << leg[5].as<double>() << ",";
+            if (!leg[6].is_null()) os << "\"quantity_submitted\":" << leg[6].as<double>() << ",";
+            else                   os << "\"quantity_submitted\":null,";
+            if (!leg[7].is_null()) os << "\"price_submitted\":" << leg[7].as<double>() << ",";
+            else                   os << "\"price_submitted\":null,";
+            os << "\"quantity_filled\":" << leg[8].as<double>() << ",";
+            if (!leg[9].is_null()) os << "\"price_filled_avg\":" << leg[9].as<double>() << ",";
+            else                   os << "\"price_filled_avg\":null,";
+            if (!leg[10].is_null()) os << "\"client_order_id\":\"" << json_escape(leg[10].as<std::string>()) << "\",";
+            else                    os << "\"client_order_id\":null,";
+            if (!leg[11].is_null()) os << "\"venue_order_id\":\"" << json_escape(leg[11].as<std::string>()) << "\",";
+            else                    os << "\"venue_order_id\":null,";
+            if (!leg[12].is_null()) os << "\"error_code\":\"" << json_escape(leg[12].as<std::string>()) << "\",";
+            else                    os << "\"error_code\":null,";
+            if (!leg[13].is_null()) os << "\"error_message\":\"" << json_escape(leg[13].as<std::string>()) << "\",";
+            else                    os << "\"error_message\":null,";
+            os << "\"created_at\":\"" << json_escape(leg[14].as<std::string>()) << "\",";
+            if (!leg[15].is_null()) os << "\"submitted_at\":\"" << json_escape(leg[15].as<std::string>()) << "\",";
+            else                    os << "\"submitted_at\":null,";
+            if (!leg[16].is_null()) os << "\"acknowledged_at\":\"" << json_escape(leg[16].as<std::string>()) << "\",";
+            else                    os << "\"acknowledged_at\":null,";
+            if (!leg[17].is_null()) os << "\"first_fill_at\":\"" << json_escape(leg[17].as<std::string>()) << "\",";
+            else                    os << "\"first_fill_at\":null,";
+            if (!leg[18].is_null()) os << "\"last_fill_at\":\"" << json_escape(leg[18].as<std::string>()) << "\",";
+            else                    os << "\"last_fill_at\":null,";
+            if (!leg[19].is_null()) os << "\"terminal_at\":\"" << json_escape(leg[19].as<std::string>()) << "\",";
+            else                    os << "\"terminal_at\":null,";
+            if (!leg[20].is_null()) os << "\"last_updated_at\":\"" << json_escape(leg[20].as<std::string>()) << "\"";
+            else                    os << "\"last_updated_at\":null";
+            os << "}";
+        }
+        os << "]";
+        os << "}";
+
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = os.str();
+    } catch (const std::exception& e) {
+        res.result(http::status::internal_server_error);
+        res.set(http::field::content_type, "application/json");
+        std::ostringstream os;
+        os << "{\"error\":\"" << json_escape(e.what()) << "\"}";
+        res.body() = os.str();
+    }
+}
+
+// Handle /api/book endpoint
+void handle_book(FeedManager& feeds,
+                        const urls::url_view& url,
+                        http::response<http::string_body>& res)
+{
+    // Maximum UI depth accepted by /api/book.
+    constexpr std::size_t MAX_TOP_DEPTH = 50;
+
+    std::size_t depth = MAX_TOP_DEPTH;
+    std::string symbol;
+
+    for (auto const& p : url.params()) {
+        if (p.key == "depth") {
+            try {
+                std::size_t d = std::stoul(std::string(p.value));
+                if (d > 0 && d <= MAX_TOP_DEPTH) {
+                    depth = d;
+                }
+            } catch (...) {
+                // ignore invalid input
+            }
+        } else if (p.key == "symbol") {
+            symbol = std::string(p.value);
+        }
+    }
+
+    if (symbol.empty()) {
+        res.result(http::status::bad_request);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"symbol parameter required"})";
+        return;
+    }
+
+    auto ui = feeds.get_or_subscribe(symbol);
+    if (!ui) {
+        res.result(http::status::not_found);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"symbol not supported"})";
+        return;
+    }
+
+    UIConsolidated snap = ui->snapshot_consolidated(depth);
+
+    std::ostringstream os;
+    if (snap.is_cold) {
+        res.result(http::status::service_unavailable);
+    } else {
+        res.result(http::status::ok);
+    }
+
+    os << "{";
+    os << "\"status\":{";
+    os << "\"code\":" << (snap.is_cold ? 503 : 200) << ",";
+    os << "\"message\":\""
+       << (snap.is_cold
+               ? "Market data transport stale: all venues cold"
+               : (snap.is_warming
+                      ? "Market data warming up: connecting to venues"
+                      : (snap.is_quiet
+                      ? "Market data quiet: transport alive, no recent book updates"
+                      : "OK")))
+       << "\"";
+    os << "},";
+    if (snap.last_updated_ms > 0) {
+        os << "\"last_updated_ms\":" << snap.last_updated_ms << ",";
+    } else {
+        os << "\"last_updated_ms\":null,";
+    }
+    os << "\"symbol\":\"" << json_escape(snap.symbol) << "\",";
+    os << "\"venues\":[";
+    for (std::size_t i = 0; i < snap.venues.size(); ++i) {
+        if (i > 0) os << ",";
+        os << "\"" << json_escape(snap.venues[i]) << "\"";
+    }
+    os << "],";
+
+    // Consolidated ladders with venue information for UI
+    os << "\"bids\":"; json_ladder_array(os, snap.bids); os << ",";
+    os << "\"asks\":"; json_ladder_array(os, snap.asks);
+    os << "}"; // root object
+
+    res.set(http::field::content_type, "application/json");
+    res.body() = os.str();
+}
+
+// Handle /api/pairs endpoint
+void handle_pairs(const FeedManager& feeds,
+                         http::response<http::string_body>& res)
+{
+    std::vector<std::string> pairs = feeds.list_supported_pairs();
+    std::sort(pairs.begin(), pairs.end());
+
+    std::ostringstream os;
+    os << "{\"pairs\":[";
+    for (std::size_t i = 0; i < pairs.size(); ++i) {
+        if (i > 0) os << ",";
+        os << "\"" << json_escape(pairs[i]) << "\"";
+    }
+    os << "]}";
+
+    res.result(http::status::ok);
+    res.set(http::field::content_type, "application/json");
+    res.body() = os.str();
+}
+
+} // namespace
+
+void handle_request(FeedManager& feeds,
+                           const std::string& db_conn_str,
+                           const http::request<http::string_body>& req,
+                           http::response<http::string_body>& res)
+{
+    res.set(http::field::server, "md-router/0.1");
+
+    // Parse the target as an origin-form URL
+    std::string_view target{req.target().data(), req.target().size()};
+    auto parsed_result = urls::parse_origin_form(target);
+    if (!parsed_result) {
+        res.result(http::status::bad_request);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"error":"bad request"})";
+        return;
+    }
+
+    urls::url_view url = *parsed_result;
+
+    // /api/health
+    if (req.method() == http::verb::get && url.path() == "/api/health") {
+        res.result(http::status::ok);
+        res.set(http::field::content_type, "application/json");
+        res.body() = R"({"status":"ok"})";
+        return;
+    }
+
+    // /api/pairs
+    if (req.method() == http::verb::get && url.path() == "/api/pairs") {
+        handle_pairs(feeds, res);
+        return;
+    }
+
+    // /api/book?symbol=BTC-USD&depth=10
+    if (req.method() == http::verb::get && url.path() == "/api/book") {
+        handle_book(feeds, url, res);
+        return;
+    }
+
+    // /api/auth/signup
+    if (req.method() == http::verb::post && url.path() == "/api/auth/signup") {
+        handle_signup(db_conn_str, req.body(), res);
+        return;
+    }
+
+    // /api/auth/login
+    if (req.method() == http::verb::post && url.path() == "/api/auth/login") {
+        handle_login(db_conn_str, req.body(), res);
+        return;
+    }
+
+    // /api/orders
+    if (req.method() == http::verb::post && url.path() == "/api/orders") {
+        handle_create_order(feeds, db_conn_str, req.body(), res);
+        return;
+    }
+
+    // /api/orders?user_id=...
+    if (req.method() == http::verb::get && url.path() == "/api/orders") {
+        handle_get_orders(db_conn_str, url, res);
+        return;
+    }
+
+    // /api/orders/:id/details?user_id=...
+    std::string path(url.path());
+    if (req.method() == http::verb::get &&
+        path.starts_with("/api/orders/") &&
+        path.ends_with("/details")) {
+        constexpr std::size_t kPrefixLen = 12; // "/api/orders/"
+        constexpr std::size_t kSuffixLen = 8;  // "/details"
+        if (path.size() > kPrefixLen + kSuffixLen) {
+            std::string order_id(path.substr(kPrefixLen, path.size() - kPrefixLen - kSuffixLen));
+            if (!order_id.empty()) {
+                handle_get_order_details(db_conn_str, order_id, url, res);
+                return;
+            }
+        }
+    }
+
+    // /api/orders/:id PATCH endpoint (cancel order)
+    if (req.method() == http::verb::patch && path.starts_with("/api/orders/")) {
+        std::string order_id(path.substr(12)); // Skip "/api/orders/"
+        if (!order_id.empty()) {
+            handle_cancel_order(db_conn_str, order_id, res);
+            return;
+        }
+    }
+
+    // 404
+    res.result(http::status::not_found);
+    res.set(http::field::content_type, "application/json");
+    res.body() = R"({"error":"not found"})";
+}

@@ -8,9 +8,7 @@ import {
   type BookResponse,
 } from "../../components/ConsolidatedOrderBook";
 import { OrderForm } from "../../components/OrderForm";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+import { API_BASE_URL } from "@/lib/api";
 
 export default function TradePage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();

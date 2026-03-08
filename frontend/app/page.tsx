@@ -34,6 +34,17 @@ export default function HomePage() {
     }
   }, [isAuthenticated]);
 
+  // Allow deep links from /login and /signup redirects.
+  useEffect(() => {
+    const authMode = new URLSearchParams(window.location.search).get("auth");
+    if (authMode !== "login" && authMode !== "signup") {
+      return;
+    }
+    setIsLoginMode(authMode === "login");
+    setShowAuthModal(true);
+    setError(null);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -50,8 +61,9 @@ export default function HomePage() {
         await signup(email, password, firstName, lastName);
         setShouldRedirect(true);
       }
-    } catch (err: any) {
-      setError(err?.message || (isLoginMode ? "Login failed" : "Signup failed"));
+    } catch (err: unknown) {
+      const fallbackMessage = isLoginMode ? "Login failed" : "Signup failed";
+      setError(err instanceof Error ? err.message : fallbackMessage);
       setIsSubmitting(false);
     }
   };

@@ -141,12 +141,11 @@ int main() {
     load_env_file();
     
     // Initialize Supabase connection and create tables
-    std::unique_ptr<IOrderStore> order_store;
     std::string db_conn_str;
     try {
         db_conn_str = get_supabase_connection_string();
-        order_store = make_supabase_store(db_conn_str);
-        std::cout << "Database connected successfully" << std::endl;
+        supabase::bootstrap_database(db_conn_str);
+        std::cout << "Database connected and schema ready" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Warning: Failed to initialize Supabase: " << e.what() << std::endl;
         std::cerr << "Server will continue without database functionality." << std::endl;

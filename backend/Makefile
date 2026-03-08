@@ -66,6 +66,7 @@ SOURCES := src/venues/coinbase/ws.cpp \
            src/venues/kraken/ws.cpp \
            src/md/symbol_codec.cpp \
            src/ui/master_feed.cpp \
+           src/server/http_routes.cpp \
            src/server/server_main.cpp
 HEADERS := $(shell find src -name '*.hpp')
 

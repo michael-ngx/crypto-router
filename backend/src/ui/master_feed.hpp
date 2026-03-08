@@ -30,6 +30,9 @@ struct UIConsolidated {
     // True when all venues are stale or missing.
     bool is_cold{false};
 
+    // True while feeds are initializing and no transport has been observed yet.
+    bool is_warming{false};
+
     // True when transport is live but no recent book updates were observed.
     bool is_quiet{false};
 

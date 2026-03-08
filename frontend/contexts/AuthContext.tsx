@@ -1,9 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+import { API_BASE_URL } from "@/lib/api";
 
 interface User {
   user_id: string;
@@ -125,4 +123,3 @@ export function useAuth() {
   }
   return context;
 }
-
