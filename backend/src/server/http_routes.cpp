@@ -203,9 +203,10 @@ void handle_login(const std::string& db_conn_str,
 
 // Handle /api/orders POST endpoint
 void handle_create_order(FeedManager& feeds,
-                                const std::string& db_conn_str,
-                                const std::string& request_body,
-                                http::response<http::string_body>& res)
+                        const std::string& db_conn_str,
+                        router::RouterVersionId router_version,
+                        const std::string& request_body,
+                        http::response<http::string_body>& res)
 {
     if (db_conn_str.empty()) {
         res.result(http::status::internal_server_error);
@@ -338,7 +339,7 @@ void handle_create_order(FeedManager& feeds,
         // TODO: Make router and exchange execution service async.
 
         // Grab routing inputs (market data feeds) for the symbol, which also ensures the feed is live and subscribed.
-        RouterService router(feeds, db_conn_str);
+        RouterService router(feeds, db_conn_str, router_version);
         RouterOrderRequest router_req{
             user_id,
             symbol,
@@ -888,6 +889,7 @@ void handle_pairs(const FeedManager& feeds,
 
 void handle_request(FeedManager& feeds,
                            const std::string& db_conn_str,
+                           router::RouterVersionId router_version,
                            const http::request<http::string_body>& req,
                            http::response<http::string_body>& res)
 {
@@ -939,7 +941,7 @@ void handle_request(FeedManager& feeds,
 
     // /api/orders
     if (req.method() == http::verb::post && url.path() == "/api/orders") {
-        handle_create_order(feeds, db_conn_str, req.body(), res);
+        handle_create_order(feeds, db_conn_str, router_version, req.body(), res);
         return;
     }
 

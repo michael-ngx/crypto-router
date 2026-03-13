@@ -3,12 +3,13 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include <pqxx/pqxx>
 
 #include "server/feed_manager.hpp"
-#include "router/order_router.hpp"
+#include "router/router_framework.hpp"
 #include "supabase/storage_supabase.hpp"
 
 struct RouterOrderRequest {
@@ -42,8 +43,12 @@ struct RouterError {
 
 class RouterService {
 public:
-    RouterService(FeedManager& feeds, const std::string& db_conn_str)
-        : feeds_(feeds), db_conn_str_(db_conn_str) {}
+    RouterService(FeedManager& feeds,
+                  const std::string& db_conn_str,
+                  router::RouterVersionId router_version = router::kDefaultRouterVersionId)
+        : feeds_(feeds),
+          db_conn_str_(db_conn_str),
+          router_version_(router_version) {}
 
     std::variant<RouterOrderResult, RouterError> create_order(
         const RouterOrderRequest& req) const
@@ -66,7 +71,8 @@ public:
         /* ***********************************
          * CALCULATE ROUTING PATH
          ************************************/
-        RoutingDecision routing = route_order_from_snapshots(
+        RoutingDecision routing = router::route_order(
+            router_version_,
             routing_inputs->feeds,
             req.side_lower,
             req.quantity_requested,
@@ -208,4 +214,5 @@ public:
 private:
     FeedManager& feeds_;
     const std::string& db_conn_str_;
+    router::RouterVersionId router_version_;
 };
