@@ -1,41 +1,19 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <queue>
 #include <string>
-#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "router/router_common.hpp"
-
-struct VenueFeePolicy {
-    double maker{0.0};
-    double taker{0.0};
-};
-
-inline constexpr double kCoinbaseMakerFeeRate = 0.0040; // 40 bps
-inline constexpr double kCoinbaseTakerFeeRate = 0.0060; // 60 bps
-inline constexpr double kKrakenMakerFeeRate = 0.0025;   // 25 bps
-inline constexpr double kKrakenTakerFeeRate = 0.0040;   // 40 bps
-
-inline VenueFeePolicy fee_policy_for_venue(std::string_view venue) {
-    if (venue == "Coinbase") {
-        return VenueFeePolicy{kCoinbaseMakerFeeRate, kCoinbaseTakerFeeRate};
-    }
-    if (venue == "Kraken") {
-        return VenueFeePolicy{kKrakenMakerFeeRate, kKrakenTakerFeeRate};
-    }
-    return VenueFeePolicy{};
-}
-
-inline double fee_rate_for_order(std::string_view venue, bool use_maker_fee) {
-    const VenueFeePolicy policy = fee_policy_for_venue(venue);
-    return use_maker_fee ? policy.maker : policy.taker;
-}
+#include "venues/venue_api.hpp"
 
 inline double fee_adjusted_price(double raw_price, bool is_buy, double fee_rate) {
     return is_buy
@@ -43,40 +21,95 @@ inline double fee_adjusted_price(double raw_price, bool is_buy, double fee_rate)
         : raw_price * (1.0 - fee_rate);
 }
 
-// Fee-aware best-price strategy:
-// - market orders use taker fees
-// - limit orders use maker fees
+inline double maker_effective_limit_price(double limit_price, bool is_buy, double maker_fee) {
+    return fee_adjusted_price(limit_price, is_buy, maker_fee);
+}
+
+// Fee-aware best-price strategy under fixed-per-order tier assumption:
+// - Fee tier is determined BEFORE routing using current trailing volume.
+// - Fee tier does NOT change during this parent order, even across multiple fills.
+// - Market orders use taker fee.
+// - Limit orders are two-phase:
+//   1) immediate-crossing quantity uses taker fee
+//   2) residual resting quantity uses maker fee at the limit price
 struct RouterV2BestPriceFee {
-public:
-    RoutingDecision route_order(
+private:
+    struct VenueState {
+        std::shared_ptr<const BookSnapshot> snapshot;
+        const std::string* venue{nullptr};
+        std::uint64_t seq{0};
+        double maker_fee{0.0};
+        double taker_fee{0.0};
+    };
+
+    struct GreedyBookResult {
+        double filled_qty{0.0};
+        double raw_notional{0.0};
+        std::vector<double> venue_qty;
+        std::vector<double> venue_notional;
+    };
+
+    static std::vector<VenueState> collect_venue_states(
         const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
-        const std::string& side_lower,
-        double quantity,
-        const std::optional<double>& limit_price) const
+        const std::unordered_map<std::string, VenueInfo>& venue_info,
+        const std::unordered_map<std::string, double>& trailing_volume_usd_by_venue)
     {
-        RoutingDecision out;
-        out.requested_qty = quantity;
+        std::vector<VenueState> states;
+        states.reserve(feeds.size());
 
-        if (quantity <= 0.0) {
-            out.message = "invalid quantity";
-            return out;
+        for (const auto& feed : feeds) {
+            if (!feed) continue;
+
+            auto snapshot = feed->load_snapshot();
+            if (!snapshot) continue;
+
+            double maker_fee = 0.0;
+            double taker_fee = 0.0;
+            auto info_it = venue_info.find(snapshot->venue);
+            if (info_it != venue_info.end()) {
+                double trailing_volume_usd = 0.0;
+                auto volume_it = trailing_volume_usd_by_venue.find(snapshot->venue);
+                if (volume_it != trailing_volume_usd_by_venue.end()) {
+                    trailing_volume_usd = std::max(0.0, volume_it->second);
+                }
+
+                const auto tier = info_it->second.fees.tier_for_volume(trailing_volume_usd);
+                maker_fee = tier.maker_fee;
+                taker_fee = tier.taker_fee;
+            }
+
+            states.push_back(
+                VenueState{
+                    snapshot,
+                    &snapshot->venue,
+                    snapshot->seq,
+                    maker_fee,
+                    taker_fee
+                }
+            );
         }
 
-        const bool is_buy = side_lower == "buy";
-        const bool is_sell = side_lower == "sell";
-        if (!is_buy && !is_sell) {
-            out.message = "invalid side";
-            return out;
-        }
+        return states;
+    }
 
-        const bool use_maker_fee = limit_price.has_value();
+    static GreedyBookResult route_immediate_greedy(
+        const std::vector<VenueState>& states,
+        bool is_buy,
+        double quantity,
+        const std::optional<double>& limit_price)
+    {
+        GreedyBookResult result;
+        result.venue_qty.assign(states.size(), 0.0);
+        result.venue_notional.assign(states.size(), 0.0);
+
+        if (quantity <= kRoutingEps || states.empty()) return result;
 
         struct SnapshotCursor {
             const std::string* venue{nullptr};
             const std::vector<BookSnapshotLevel>* levels{nullptr};
             std::uint64_t seq{0};
             std::size_t idx{0};
-            double fee_rate{0.0};
+            double taker_fee{0.0}; // fixed for this order
 
             bool valid() const noexcept {
                 return levels != nullptr && idx < levels->size();
@@ -98,43 +131,34 @@ public:
             }
         };
 
-        // Hold shared_ptr lifetime while routing.
-        std::vector<std::shared_ptr<const BookSnapshot>> snapshots;
-        snapshots.reserve(feeds.size());
+        std::vector<SnapshotCursor> cursors;
+        cursors.reserve(states.size());
+        std::vector<std::size_t> state_idx_by_cursor;
+        state_idx_by_cursor.reserve(states.size());
 
-        std::vector<SnapshotCursor> snapshot_cursors;
-        snapshot_cursors.reserve(feeds.size());
+        for (std::size_t i = 0; i < states.size(); ++i) {
+            const auto& state = states[i];
+            if (!state.snapshot) continue;
 
-        for (const auto& feed : feeds) {
-            if (!feed) continue;
+            const auto* levels = &(is_buy ? state.snapshot->asks : state.snapshot->bids);
+            if (levels->empty()) continue;
 
-            auto snapshot = feed->load_snapshot();
-            if (!snapshot) continue;
-
-            const auto& side = is_buy ? snapshot->asks : snapshot->bids;
-            if (side.empty()) continue;
-
-            snapshots.push_back(std::move(snapshot));
-            const auto& held_snapshot = snapshots.back();
-
-            snapshot_cursors.push_back(
+            state_idx_by_cursor.push_back(i);
+            cursors.push_back(
                 SnapshotCursor{
-                    &held_snapshot->venue,
-                    &(is_buy ? held_snapshot->asks : held_snapshot->bids),
-                    held_snapshot->seq,
+                    state.venue,
+                    levels,
+                    state.seq,
                     0,
-                    fee_rate_for_order(held_snapshot->venue, use_maker_fee)
+                    state.taker_fee
                 }
             );
         }
 
-        if (snapshot_cursors.empty()) {
-            out.message = "no liquidity available";
-            return out;
-        }
+        if (cursors.empty()) return result;
 
         struct HeapNode {
-            std::size_t venue_idx{0};
+            std::size_t cursor_idx{0};
             double price{0.0};
             double effective_price{0.0};
             double size{0.0};
@@ -144,19 +168,14 @@ public:
             bool is_buy{true};
             bool operator()(const HeapNode& a, const HeapNode& b) const {
                 if (a.effective_price != b.effective_price) {
-                    // For buys: lower fee-adjusted asks are better.
-                    // For sells: higher fee-adjusted bids are better.
                     return is_buy
                         ? a.effective_price > b.effective_price
                         : a.effective_price < b.effective_price;
                 }
                 if (a.price != b.price) {
-                    // Fall back to raw price for deterministic tie-breaks.
                     return is_buy ? a.price > b.price : a.price < b.price;
                 }
-                // Prefer larger resting size for tie-break.
                 if (a.size != b.size) return a.size < b.size;
-                // Tie-break with fresher published snapshot.
                 return a.seq < b.seq;
             }
         };
@@ -165,86 +184,165 @@ public:
             HeapCompare{is_buy}
         );
 
-        for (std::size_t i = 0; i < snapshot_cursors.size(); ++i) {
-            const auto& cursor = snapshot_cursors[i];
-            const double price = cursor.price();
-            heap.push(
-                HeapNode{
-                    i,
-                    price,
-                    fee_adjusted_price(price, is_buy, cursor.fee_rate),
-                    cursor.size(),
-                    cursor.seq
-                }
-            );
-        }
+        auto make_node = [&](std::size_t cursor_idx) {
+            const auto& c = cursors[cursor_idx];
+            const double px = c.price();
+            return HeapNode{
+                cursor_idx,
+                px,
+                fee_adjusted_price(px, is_buy, c.taker_fee),
+                c.size(),
+                c.seq
+            };
+        };
 
-        if (heap.empty()) {
-            out.message = "no liquidity available";
-            return out;
+        for (std::size_t i = 0; i < cursors.size(); ++i) {
+            heap.push(make_node(i));
         }
 
         double remaining = quantity;
-        double total_notional = 0.0;
-
-        // Aggregate by venue index directly (faster than hashing by venue string).
-        std::vector<double> venue_qty(snapshot_cursors.size(), 0.0);
-        std::vector<double> venue_notional(snapshot_cursors.size(), 0.0);
-        std::vector<std::size_t> touched_venues;
-        touched_venues.reserve(snapshot_cursors.size());
-
         while (remaining > kRoutingEps && !heap.empty()) {
-            const HeapNode lvl = heap.top();
+            const auto lvl = heap.top();
             heap.pop();
 
             if (limit_price.has_value()) {
-                if (is_buy && lvl.price > *limit_price) break;
-                if (is_sell && lvl.price < *limit_price) break;
+                if (is_buy && lvl.price > *limit_price) continue;
+                if (!is_buy && lvl.price < *limit_price) continue;
             }
 
             const double take_qty = std::min(remaining, lvl.size);
             if (take_qty <= kRoutingEps) continue;
 
-            if (venue_qty[lvl.venue_idx] <= kRoutingEps) {
-                touched_venues.push_back(lvl.venue_idx);
-            }
-            venue_qty[lvl.venue_idx] += take_qty;
-            venue_notional[lvl.venue_idx] += (take_qty * lvl.price);
+            const std::size_t state_idx = state_idx_by_cursor[lvl.cursor_idx];
+            result.venue_qty[state_idx] += take_qty;
+            result.venue_notional[state_idx] += (take_qty * lvl.price);
 
+            result.raw_notional += (take_qty * lvl.price);
+            result.filled_qty += take_qty;
             remaining -= take_qty;
-            total_notional += (take_qty * lvl.price);
 
-            auto& cursor = snapshot_cursors[lvl.venue_idx];
+            auto& cursor = cursors[lvl.cursor_idx];
             cursor.next();
             if (cursor.valid()) {
-                const double next_price = cursor.price();
-                heap.push(
-                    HeapNode{
-                        lvl.venue_idx,
-                        next_price,
-                        fee_adjusted_price(next_price, is_buy, cursor.fee_rate),
-                        cursor.size(),
-                        cursor.seq
-                    }
-                );
+                heap.push(make_node(lvl.cursor_idx));
             }
         }
 
-        out.routable_qty = quantity - remaining;
+        return result;
+    }
+
+    static std::optional<std::size_t> choose_best_maker_venue(
+        const std::vector<VenueState>& states,
+        bool is_buy,
+        double limit_price)
+    {
+        if (states.empty()) return std::nullopt;
+
+        std::optional<std::size_t> best_idx;
+        double best_effective = is_buy
+            ? std::numeric_limits<double>::infinity()
+            : -std::numeric_limits<double>::infinity();
+        std::uint64_t best_seq = 0;
+
+        for (std::size_t i = 0; i < states.size(); ++i) {
+            if (!states[i].venue) continue;
+            const double effective = maker_effective_limit_price(limit_price, is_buy, states[i].maker_fee);
+            if (!best_idx.has_value()) {
+                best_idx = i;
+                best_effective = effective;
+                best_seq = states[i].seq;
+                continue;
+            }
+
+            bool take = false;
+            if (is_buy) {
+                if (effective < best_effective - kRoutingEps) {
+                    take = true;
+                } else if (std::abs(effective - best_effective) <= kRoutingEps) {
+                    if (states[i].seq > best_seq) take = true;
+                }
+            } else {
+                if (effective > best_effective + kRoutingEps) {
+                    take = true;
+                } else if (std::abs(effective - best_effective) <= kRoutingEps) {
+                    if (states[i].seq > best_seq) take = true;
+                }
+            }
+
+            if (take) {
+                best_idx = i;
+                best_effective = effective;
+                best_seq = states[i].seq;
+            }
+        }
+
+        return best_idx;
+    }
+
+public:
+    static RoutingDecision route_order(
+        const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
+        const std::string& side_lower,
+        double quantity,
+        const std::optional<double>& limit_price,
+        const std::unordered_map<std::string, VenueInfo>& venue_info,
+        const std::unordered_map<std::string, double>& trailing_volume_usd_by_venue)
+    {
+        RoutingDecision out;
+        out.requested_qty = quantity;
+
+        if (quantity <= 0.0) {
+            out.message = "invalid quantity";
+            return out;
+        }
+
+        const bool is_buy = side_lower == "buy";
+        const bool is_sell = side_lower == "sell";
+        if (!is_buy && !is_sell) {
+            out.message = "invalid side";
+            return out;
+        }
+
+        const auto states = collect_venue_states(feeds, venue_info, trailing_volume_usd_by_venue);
+        if (states.empty()) {
+            out.message = "no liquidity available";
+            return out;
+        }
+
+        const auto immediate = route_immediate_greedy(states, is_buy, quantity, limit_price);
+
+        std::vector<double> venue_qty = immediate.venue_qty;
+        std::vector<double> venue_notional = immediate.venue_notional;
+        double total_notional = immediate.raw_notional;
+        double routed_qty = immediate.filled_qty;
+        double remaining = std::max(0.0, quantity - routed_qty);
+
+        if (limit_price.has_value() && remaining > kRoutingEps) {
+            const auto maker_idx = choose_best_maker_venue(states, is_buy, *limit_price);
+            if (maker_idx.has_value()) {
+                venue_qty[*maker_idx] += remaining;
+                venue_notional[*maker_idx] += remaining * (*limit_price);
+                total_notional += remaining * (*limit_price);
+                routed_qty += remaining;
+                remaining = 0.0;
+            }
+        }
+
+        out.routable_qty = routed_qty;
+        out.fully_routable = remaining <= kRoutingEps;
         if (out.routable_qty > kRoutingEps) {
             out.indicative_average_price = total_notional / out.routable_qty;
         }
-        out.fully_routable = remaining <= kRoutingEps;
 
-        out.slices.reserve(touched_venues.size());
-        for (const auto idx : touched_venues) {
-            const double q = venue_qty[idx];
+        out.slices.reserve(states.size());
+        for (std::size_t i = 0; i < states.size(); ++i) {
+            const double q = venue_qty[i];
             if (q <= kRoutingEps) continue;
             out.slices.push_back(
                 RouteSlice{
-                    *snapshot_cursors[idx].venue,
+                    *states[i].venue,
                     q,
-                    venue_notional[idx] / q
+                    venue_notional[i] / q
                 }
             );
         }

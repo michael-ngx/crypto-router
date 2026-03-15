@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "md/venue_feed_iface.hpp"
 
