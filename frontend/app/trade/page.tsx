@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../contexts/AuthContext";
 import {
@@ -10,16 +10,44 @@ import {
 import { OrderForm } from "../../components/OrderForm";
 import { API_BASE_URL } from "@/lib/api";
 
+// Parse "BASE-QUOTE" pairs into base -> quotes map; bases and quotes sorted.
+function useBaseQuoteFromPairs(pairs: string[]) {
+  return useMemo(() => {
+    const baseToQuotes: Record<string, string[]> = {};
+    for (const pair of pairs) {
+      const idx = pair.indexOf("-");
+      if (idx <= 0 || idx === pair.length - 1) continue;
+      const base = pair.slice(0, idx);
+      const quote = pair.slice(idx + 1);
+      if (!baseToQuotes[base]) baseToQuotes[base] = [];
+      if (!baseToQuotes[base].includes(quote)) baseToQuotes[base].push(quote);
+    }
+    const bases = Object.keys(baseToQuotes).sort();
+    for (const base of bases) {
+      baseToQuotes[base].sort();
+    }
+    return { baseToQuotes, bases };
+  }, [pairs]);
+}
+
 export default function TradePage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const router = useRouter();
-  const [selectedPair, setSelectedPair] = useState("BTC-USD");
   const [availablePairs, setAvailablePairs] = useState<string[]>([]);
   const [pairsLoading, setPairsLoading] = useState(false);
   const [pairsError, setPairsError] = useState<string | null>(null);
+  const [selectedBase, setSelectedBase] = useState("");
+  const [selectedQuote, setSelectedQuote] = useState("");
   const [bookData, setBookData] = useState<BookResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { baseToQuotes, bases } = useBaseQuoteFromPairs(availablePairs);
+  const quoteOptions = selectedBase ? baseToQuotes[selectedBase] ?? [] : [];
+  const selectedPair =
+    selectedBase && selectedQuote && quoteOptions.includes(selectedQuote)
+      ? `${selectedBase}-${selectedQuote}`
+      : "";
 
   // Track time of last successful book update (with at least one level)
   const lastUpdateRef = useRef<number | null>(null);
@@ -77,12 +105,30 @@ export default function TradePage() {
 
         if (!isCancelled) {
           setAvailablePairs(pairs);
-          setSelectedPair((prev) => {
-            if (pairs.length === 0) {
-              return "";
-            }
-            return pairs.includes(prev) ? prev : pairs[0];
-          });
+          if (pairs.length > 0) {
+            const { baseToQuotes, bases } = (() => {
+              const b2q: Record<string, string[]> = {};
+              for (const pair of pairs) {
+                const idx = pair.indexOf("-");
+                if (idx <= 0 || idx === pair.length - 1) continue;
+                const base = pair.slice(0, idx);
+                const quote = pair.slice(idx + 1);
+                if (!b2q[base]) b2q[base] = [];
+                if (!b2q[base].includes(quote)) b2q[base].push(quote);
+              }
+              const b = Object.keys(b2q).sort();
+              b.forEach((base) => b2q[base].sort());
+              return { baseToQuotes: b2q, bases: b };
+            })();
+            const base = bases.includes("BTC") ? "BTC" : bases[0];
+            const quotes = baseToQuotes[base] ?? [];
+            const quote = quotes.includes("USD") ? "USD" : quotes[0] ?? "";
+            setSelectedBase(base);
+            setSelectedQuote(quote);
+          } else {
+            setSelectedBase("");
+            setSelectedQuote("");
+          }
         }
       } catch (err: any) {
         if (!isCancelled) {
@@ -205,15 +251,8 @@ export default function TradePage() {
     );
   }
 
-  const formatPairLabel = (pair: string) => pair.split("-").join(" / ");
   const displayBook =
     selectedPair && bookData?.symbol === selectedPair ? bookData : null;
-  const selectOptions =
-    availablePairs.length > 0
-      ? availablePairs
-      : selectedPair
-        ? [selectedPair]
-        : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -229,29 +268,67 @@ export default function TradePage() {
         </div>
 
         {!pairsError ? (
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-slate-200">Trading pair</label>
-            <select
-              value={selectedPair}
-              onChange={(e) => {
-                setSelectedPair(e.target.value);
-                invalidateBook();
-              }}
-              disabled={pairsLoading || availablePairs.length === 0}
-              className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
-            >
-              {pairsLoading ? (
-                <option value={selectedPair || ""}>Loading pairs...</option>
-              ) : selectOptions.length === 0 ? (
-                <option value="">No pairs available</option>
-              ) : (
-                selectOptions.map((pair) => (
-                  <option key={pair} value={pair}>
-                    {formatPairLabel(pair)}
-                  </option>
-                ))
-              )}
-            </select>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-200">Base</label>
+              <select
+                value={selectedBase}
+                onChange={(e) => {
+                  const newBase = e.target.value;
+                  setSelectedBase(newBase);
+                  const quotes = baseToQuotes[newBase] ?? [];
+                  setSelectedQuote(
+                    quotes.includes(selectedQuote) ? selectedQuote : quotes[0] ?? ""
+                  );
+                  invalidateBook();
+                }}
+                disabled={pairsLoading || bases.length === 0}
+                className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
+              >
+                {pairsLoading ? (
+                  <option value="">Loading...</option>
+                ) : bases.length === 0 ? (
+                  <option value="">No bases</option>
+                ) : (
+                  bases.map((base) => (
+                    <option key={base} value={base}>
+                      {base}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-200">Quote</label>
+              <select
+                value={selectedQuote}
+                onChange={(e) => {
+                  setSelectedQuote(e.target.value);
+                  invalidateBook();
+                }}
+                disabled={
+                  pairsLoading || !selectedBase || quoteOptions.length === 0
+                }
+                className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
+              >
+                {!selectedBase ? (
+                  <option value="">Select base first</option>
+                ) : quoteOptions.length === 0 ? (
+                  <option value="">No quotes</option>
+                ) : (
+                  quoteOptions.map((quote) => (
+                    <option key={quote} value={quote}>
+                      {quote}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            {selectedPair && (
+              <span className="text-sm text-slate-400">
+                {selectedBase} / {selectedQuote}
+              </span>
+            )}
           </div>
         ) : null}
         {pairsError && (
