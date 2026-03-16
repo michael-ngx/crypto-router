@@ -1,14 +1,5 @@
 #pragma once
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <optional>
-#include <queue>
-#include <string>
-#include <vector>
-
 #include "router/router_common.hpp"
 
 struct RouterV1BestPriceSweep {
@@ -180,6 +171,7 @@ public:
             out.slices.push_back(
                 RouteSlice{
                     *snapshot_cursors[idx].venue,
+                    ExecutionType::MARKET,
                     q,
                     venue_notional[idx] / q
                 }

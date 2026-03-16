@@ -68,13 +68,13 @@ inline RoutingDecision route_order(
     const std::string& side_lower,
     double quantity,
     const std::optional<double>& limit_price,
-    const std::unordered_map<std::string, VenueInfo>& venue_info,
-    const std::unordered_map<std::string, double>& trailing_volume_usd_by_venue)
+    const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info,
+    const std::unordered_map<std::string, VenueRuntimeInfo>& venue_runtime_info)
 {
     RoutingDecision out;
     switch (version_id) {
         case RouterVersionId::V2BestPriceFee:
-            out = RouterV2BestPriceFee::route_order(feeds, side_lower, quantity, limit_price, venue_info, trailing_volume_usd_by_venue);
+            out = RouterV2BestPriceFee::route_order(feeds, side_lower, quantity, limit_price, venue_static_info, venue_runtime_info);
             return out;
         case RouterVersionId::V1BestPriceSweep:
         default:

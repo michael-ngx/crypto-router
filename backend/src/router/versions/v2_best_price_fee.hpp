@@ -1,17 +1,5 @@
 #pragma once
 
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <optional>
-#include <queue>
-#include <string>
-#include <unordered_map>
-#include <vector>
-
 #include "router/router_common.hpp"
 #include "venues/venue_api.hpp"
 
@@ -51,8 +39,8 @@ private:
 
     static std::vector<VenueState> collect_venue_states(
         const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
-        const std::unordered_map<std::string, VenueInfo>& venue_info,
-        const std::unordered_map<std::string, double>& trailing_volume_usd_by_venue)
+        const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info,
+        const std::unordered_map<std::string, VenueRuntimeInfo>& venue_runtime_info)
     {
         std::vector<VenueState> states;
         states.reserve(feeds.size());
@@ -65,12 +53,12 @@ private:
 
             double maker_fee = 0.0;
             double taker_fee = 0.0;
-            auto info_it = venue_info.find(snapshot->venue);
-            if (info_it != venue_info.end()) {
+            auto info_it = venue_static_info.find(snapshot->venue);
+            if (info_it != venue_static_info.end()) {
                 double trailing_volume_usd = 0.0;
-                auto volume_it = trailing_volume_usd_by_venue.find(snapshot->venue);
-                if (volume_it != trailing_volume_usd_by_venue.end()) {
-                    trailing_volume_usd = std::max(0.0, volume_it->second);
+                auto runtime_it = venue_runtime_info.find(snapshot->venue);
+                if (runtime_it != venue_runtime_info.end()) {
+                    trailing_volume_usd = std::max(0.0, runtime_it->second.trailing_volume_usd);
                 }
 
                 const auto tier = info_it->second.fees.tier_for_volume(trailing_volume_usd);
@@ -285,8 +273,8 @@ public:
         const std::string& side_lower,
         double quantity,
         const std::optional<double>& limit_price,
-        const std::unordered_map<std::string, VenueInfo>& venue_info,
-        const std::unordered_map<std::string, double>& trailing_volume_usd_by_venue)
+        const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info,
+        const std::unordered_map<std::string, VenueRuntimeInfo>& venue_runtime_info)
     {
         RoutingDecision out;
         out.requested_qty = quantity;
@@ -303,7 +291,7 @@ public:
             return out;
         }
 
-        const auto states = collect_venue_states(feeds, venue_info, trailing_volume_usd_by_venue);
+        const auto states = collect_venue_states(feeds, venue_static_info, venue_runtime_info);
         if (states.empty()) {
             out.message = "no liquidity available";
             return out;
@@ -341,6 +329,7 @@ public:
             out.slices.push_back(
                 RouteSlice{
                     *states[i].venue,
+                    ExecutionType::LIMIT_ALLOW_TAKER,
                     q,
                     venue_notional[i] / q
                 }

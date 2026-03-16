@@ -183,10 +183,10 @@ int main() {
 
     // Fetch venue-level metadata (fee schedules, etc.) from each venue at startup.
     // This map is immutable after construction and shared across all request handlers.
-    std::unordered_map<std::string, VenueInfo> venue_info;
+    std::unordered_map<std::string, VenueStaticInfo> venue_static_info;
     for (const auto& venue : venues) {
         if (venue.api) {
-            venue_info.emplace(venue.name, venue.api->fetch_venue_info());
+            venue_static_info.emplace(venue.name, venue.api->fetch_venue_static_info());
         }
     }
 
@@ -232,7 +232,7 @@ int main() {
               << router::router_version_name(router_version)
               << std::endl;
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(feed_manager, db_conn_str, router_version, venue_info, req, res);
+      handle_request(feed_manager, db_conn_str, router_version, venue_static_info, req, res);
     }};
     server.run();
 

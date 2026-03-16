@@ -27,8 +27,8 @@ public:
     // Fetch fee schedule from Kraken's public AssetPairs endpoint.
     // The response includes volume-tiered fee arrays which we parse
     // into a full fee ladder (taker from "fees", maker from "fees_maker").
-    VenueInfo fetch_venue_info() const override {
-        VenueInfo info;
+    VenueStaticInfo fetch_venue_static_info() const override {
+        VenueStaticInfo info;
 
         // Query a single well-known pair to minimise payload.
         auto body = venues::http_json::https_get(
@@ -145,7 +145,7 @@ private:
         return schedule;
     }
 
-    static void log_fees(const VenueInfo& info) {
+    static void log_fees(const VenueStaticInfo& info) {
         const auto& sched = info.fees;
         std::cout << "[kraken] Fee schedule"
                   << (sched.fetched_from_api ? " (from API)" : " (fallback)")

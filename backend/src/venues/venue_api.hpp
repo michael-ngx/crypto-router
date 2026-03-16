@@ -43,8 +43,17 @@ struct VenueFeeSchedule {
 /// Extensible container for venue-level metadata fetched at startup.
 /// Currently holds fee schedule; future additions may include rate limits,
 /// minimum order sizes, supported order types, etc.
-struct VenueInfo {
+struct VenueStaticInfo {
     VenueFeeSchedule fees;
+};
+
+
+/// @brief Container for venue-specific runtime info relevant to routing decisions
+/// including trailing trade volume, latency, and volatility.
+struct VenueRuntimeInfo {
+    double trailing_volume_usd{0.0}; // trailing 30-day volume in USD, used for fee tier calculation
+    double latency_ms{0.0};        // average round-trip latency to venue API in milliseconds
+    double volatility{0.0};        // estimated price volatility for the venue's order book
 };
 
 class IVenueApi {
@@ -59,5 +68,5 @@ public:
     // Fetch venue-level metadata (fee schedule, etc.) from the venue's API.
     // Called once at application startup.  Implementations should try to fetch
     // from the venue's public API, falling back to documented base-tier rates.
-    virtual VenueInfo fetch_venue_info() const = 0;
+    virtual VenueStaticInfo fetch_venue_static_info() const = 0;
 };

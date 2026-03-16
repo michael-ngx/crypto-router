@@ -1,16 +1,28 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <algorithm>
 #include <string>
 #include <vector>
+#include <queue>
 #include <unordered_map>
 
 #include "md/venue_feed_iface.hpp"
 
+enum ExecutionType {
+    MARKET,
+    LIMIT_POST_ONLY,
+    LIMIT_ALLOW_TAKER
+};
+
 struct RouteSlice {
     std::string venue;
+    ExecutionType execution_type;
     // Aggregated planned amount, and planned average execution price for this venue leg.
     double quantity{0.0};
     double price{0.0};

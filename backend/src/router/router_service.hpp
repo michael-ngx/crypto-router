@@ -48,11 +48,11 @@ public:
     RouterService(FeedManager& feeds,
                   const std::string& db_conn_str,
                   router::RouterVersionId router_version,
-                  const std::unordered_map<std::string, VenueInfo>& venue_info)
+                  const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info)
         : feeds_(feeds),
           db_conn_str_(db_conn_str),
           router_version_(router_version),
-          venue_info_(venue_info) {}
+          venue_static_info_(venue_static_info) {}
 
     std::variant<RouterOrderResult, RouterError> create_order(
         const RouterOrderRequest& req) const
@@ -72,10 +72,10 @@ public:
             };
         }
 
-        //? Fetch trailing volume EVERY ROUTING CALL
-        std::unordered_map<std::string, double> trailing_volume_usd_by_venue;
+        // Fetch user venue runtime inputs on each routing call.
+        std::unordered_map<std::string, VenueRuntimeInfo> venue_runtime_info;
         try {
-            trailing_volume_usd_by_venue = fetch_user_trailing_volume_usd_by_venue(req.user_id);
+            venue_runtime_info = fetch_user_venue_runtime_info(req.user_id);
         } catch (const std::exception& e) {
             return RouterError{
                 RouterErrorCode::DatabaseFailure,
@@ -92,8 +92,8 @@ public:
             req.side_lower,
             req.quantity_requested,
             req.limit_price,
-            venue_info_,
-            trailing_volume_usd_by_venue
+            venue_static_info_,
+            venue_runtime_info
         );
 
         // For orders we require at least some immediately routable size.
@@ -229,10 +229,10 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, double> fetch_user_trailing_volume_usd_by_venue(
+    std::unordered_map<std::string, VenueRuntimeInfo> fetch_user_venue_runtime_info(
         const std::string& user_id) const
     {
-        std::unordered_map<std::string, double> out;
+        std::unordered_map<std::string, VenueRuntimeInfo> out;
 
         pqxx::connection conn(supabase::with_connect_timeout(db_conn_str_));
         pqxx::work txn(conn);
@@ -258,8 +258,13 @@ private:
 
         out.reserve(result.size());
         for (const auto& row : result) {
-            out.emplace(row[0].as<std::string>(), row[1].as<double>());
+            VenueRuntimeInfo runtime_info;
+            runtime_info.trailing_volume_usd = std::max(0.0, row[1].as<double>());
+            out.emplace(row[0].as<std::string>(), runtime_info);
         }
+
+        // TODO: Add also the latency and volatility runtime inputs
+
         txn.commit();
         return out;
     }
@@ -267,5 +272,5 @@ private:
     FeedManager& feeds_;
     const std::string& db_conn_str_;
     router::RouterVersionId router_version_;
-    const std::unordered_map<std::string, VenueInfo>& venue_info_;
+    const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info_;
 };

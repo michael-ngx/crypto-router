@@ -26,8 +26,8 @@ public:
     // Use the publicly documented volume-tiered schedule as the starting point;
     // upgrade to the authenticated /fees endpoint when API keys are configured.
     // Source: https://help.coinbase.com/en/exchange/trading-and-funding/exchange-fees
-    VenueInfo fetch_venue_info() const override {
-        VenueInfo info;
+    VenueStaticInfo fetch_venue_static_info() const override {
+        VenueStaticInfo info;
         info.fees.fetched_from_api = false;
 
         // Coinbase Advanced Trade tiered fee schedule (as of 2025).

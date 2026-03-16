@@ -14,6 +14,6 @@ void handle_request(
     FeedManager& feeds,
     const std::string& db_conn_str,
     router::RouterVersionId router_version,
-    const std::unordered_map<std::string, VenueInfo>& venue_info,
+    const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info,
     const boost::beast::http::request<boost::beast::http::string_body>& req,
     boost::beast::http::response<boost::beast::http::string_body>& res);
