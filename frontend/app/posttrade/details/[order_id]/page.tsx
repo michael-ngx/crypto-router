@@ -30,6 +30,7 @@ interface OrderDetails {
   execution_started_at: string | null;
   terminal_at: string | null;
   last_updated_at: string | null;
+  total_commission_usd: number;
 }
 
 interface OrderLeg {
@@ -54,6 +55,7 @@ interface OrderLeg {
   last_fill_at: string | null;
   terminal_at: string | null;
   last_updated_at: string | null;
+  commission_usd: number;
 }
 
 interface OrderDetailsResponse {
@@ -584,6 +586,31 @@ export default function OrderDetailsPage() {
                     <p>Terminal At: {formatTs(order.terminal_at)}</p>
                     <p>Quantity Filled (Total): {formatQty(order.quantity_filled)}</p>
                     <p>Average Fill Price: {formatPx(order.price_filled_avg)}</p>
+                    <p>Commission Paid: ${order.total_commission_usd.toFixed(4)}</p>
+                    {legs.length > 0 && (
+                      <div className="mt-2 overflow-x-auto rounded-lg border border-slate-700">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-900/70 text-slate-300">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Venue</th>
+                              <th className="px-3 py-2 text-left">Qty Filled</th>
+                              <th className="px-3 py-2 text-left">Avg Fill Price</th>
+                              <th className="px-3 py-2 text-left">Commission (USD)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800 text-slate-200">
+                            {legs.map((leg) => (
+                              <tr key={leg.id}>
+                                <td className="px-3 py-2">{leg.venue}</td>
+                                <td className="px-3 py-2">{formatQty(leg.quantity_filled)}</td>
+                                <td className="px-3 py-2">{formatPx(leg.price_filled_avg)}</td>
+                                <td className="px-3 py-2">${leg.commission_usd.toFixed(4)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-xs text-slate-400">

@@ -27,6 +27,7 @@ struct RouterOrderResult {
     std::string order_id;
     std::string status;
     RoutingDecision routing;
+    std::unordered_map<std::string, VenueRuntimeInfo> venue_runtime_info;
 };
 
 enum class RouterErrorCode {
@@ -219,6 +220,7 @@ public:
                 order_id,
                 final_status,
                 std::move(routing),
+                std::move(venue_runtime_info),
             };
         } catch (const std::exception& e) {
             return RouterError{
