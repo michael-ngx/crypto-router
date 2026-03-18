@@ -14,6 +14,8 @@
 #include "ui/master_feed.hpp"
 #include "server/feed_manager.hpp"
 #include "router/router_service.hpp"
+#include "execution/market_executor.hpp"
+#include "execution/limit_executor.hpp"
 #include "supabase/auth_utils.hpp"
 #include "supabase/storage_supabase.hpp"
 #include <simdjson.h>
@@ -371,6 +373,29 @@ void handle_create_order(FeedManager& feeds,
 
         const auto& result = std::get<RouterOrderResult>(routed);
         const RoutingDecision& routing = result.routing;
+
+        if (type_lower == "market") {
+            MarketExecutor executor(feeds, db_conn_str, venue_static_info);
+            auto exec_result = executor.execute(
+                result.order_id,
+                symbol,
+                side_lower,
+                routing,
+                result.venue_runtime_info);
+            if (!exec_result.ok) {
+                std::cerr << "[market_executor] fill simulation failed for order "
+                          << result.order_id << ": " << exec_result.error << "\n";
+            }
+        } else if (type_lower == "limit" && limit_price.has_value()) {
+            LimitExecutor executor(feeds, db_conn_str, venue_static_info);
+            executor.execute_async(
+                result.order_id,
+                symbol,
+                side_lower,
+                *limit_price,
+                routing,
+                result.venue_runtime_info);
+        }
         const bool has_routable_qty = routing.routable_qty > 0.0;
         const double remaining_qty =
             std::max(0.0, routing.requested_qty - routing.routable_qty);
@@ -651,7 +676,8 @@ void handle_get_order_details(const std::string& db_conn_str,
                    quantity_planned, price_planned_avg, fully_routable, routing_message,
                    quantity_filled, price_filled_avg,
                    status, failure_code, failure_message,
-                   created_at, execution_started_at, terminal_at, last_updated_at
+                   created_at, execution_started_at, terminal_at, last_updated_at,
+                   COALESCE(total_commission_usd, 0) AS total_commission_usd
             FROM public.orders
             WHERE id = $1 AND user_id = $2
             LIMIT 1
@@ -672,7 +698,8 @@ void handle_get_order_details(const std::string& db_conn_str,
                    client_order_id, venue_order_id,
                    error_code, error_message,
                    created_at, submitted_at, acknowledged_at,
-                   first_fill_at, last_fill_at, terminal_at, last_updated_at
+                   first_fill_at, last_fill_at, terminal_at, last_updated_at,
+                   COALESCE(commission_usd, 0) AS commission_usd
             FROM public.order_legs
             WHERE order_id = $1
             ORDER BY created_at ASC, venue ASC
@@ -719,8 +746,9 @@ void handle_get_order_details(const std::string& db_conn_str,
         if (!row[18].is_null()) os << "\"terminal_at\":\"" << json_escape(row[18].as<std::string>()) << "\",";
         else                    os << "\"terminal_at\":null,";
 
-        if (!row[19].is_null()) os << "\"last_updated_at\":\"" << json_escape(row[19].as<std::string>()) << "\"";
-        else                    os << "\"last_updated_at\":null";
+        if (!row[19].is_null()) os << "\"last_updated_at\":\"" << json_escape(row[19].as<std::string>()) << "\",";
+        else                    os << "\"last_updated_at\":null,";
+        os << "\"total_commission_usd\":" << row[20].as<double>();
         os << "},";
 
         os << "\"legs\":[";
@@ -763,8 +791,9 @@ void handle_get_order_details(const std::string& db_conn_str,
             else                    os << "\"last_fill_at\":null,";
             if (!leg[19].is_null()) os << "\"terminal_at\":\"" << json_escape(leg[19].as<std::string>()) << "\",";
             else                    os << "\"terminal_at\":null,";
-            if (!leg[20].is_null()) os << "\"last_updated_at\":\"" << json_escape(leg[20].as<std::string>()) << "\"";
-            else                    os << "\"last_updated_at\":null";
+            if (!leg[20].is_null()) os << "\"last_updated_at\":\"" << json_escape(leg[20].as<std::string>()) << "\",";
+            else                    os << "\"last_updated_at\":null,";
+            os << "\"commission_usd\":" << leg[21].as<double>();
             os << "}";
         }
         os << "]";
