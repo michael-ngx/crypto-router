@@ -5,24 +5,30 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "router/router_common.hpp"
 #include "router/versions/all_versions.hpp"
+#include "venues/venue_api.hpp"
 
 namespace router {
 
 inline constexpr std::string_view kRouterV1 = "v1_best_price_sweep";
 inline constexpr std::string_view kRouterV2 = "v2_best_price_fee";
-inline constexpr std::size_t kRouterVersionCount = 2;
+inline constexpr std::string_view kRouterV3 = "v3_limit_curve";
+inline constexpr std::size_t kRouterVersionCount = 3;
 
 enum class RouterVersionId : std::uint8_t {
     V1BestPriceSweep = 1,
     V2BestPriceFee = 2,
+    V3LimitCurve = 3
 };
 inline constexpr RouterVersionId kDefaultRouterVersionId = RouterVersionId::V1BestPriceSweep;
 
 inline std::string_view router_version_name(RouterVersionId version_id) {
     switch (version_id) {
+        case RouterVersionId::V3LimitCurve:
+            return kRouterV3;
         case RouterVersionId::V2BestPriceFee:
             return kRouterV2;
         case RouterVersionId::V1BestPriceSweep:
@@ -39,6 +45,9 @@ inline std::optional<RouterVersionId> parse_exact_router_version(
     }
     if (requested_version == kRouterV2) {
         return RouterVersionId::V2BestPriceFee;
+    }
+    if (requested_version == kRouterV3) {
+        return RouterVersionId::V3LimitCurve;
     }
     return std::nullopt;
 }
@@ -65,16 +74,31 @@ inline RoutingDecision route_order(
     const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
     const std::string& side_lower,
     double quantity,
-    const std::optional<double>& limit_price)
+    const std::optional<double>& limit_price,
+    const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info,
+    const std::unordered_map<std::string, VenueRuntimeInfo>& venue_runtime_info)
 {
     RoutingDecision out;
     switch (version_id) {
+        case RouterVersionId::V3LimitCurve:
+            out = RouterV3LimitCurve::route_order(
+                feeds,
+                side_lower,
+                quantity,
+                limit_price,
+                venue_static_info,
+                venue_runtime_info);
+            return out;
         case RouterVersionId::V2BestPriceFee:
-            out = RouterV2BestPriceFee{}.route_order(feeds, side_lower, quantity, limit_price);
+            out = RouterV2BestPriceFee::route_order(feeds, side_lower, quantity, limit_price, venue_static_info, venue_runtime_info);
             return out;
         case RouterVersionId::V1BestPriceSweep:
         default:
-            out = RouterV1BestPriceSweep{}.route_order(feeds, side_lower, quantity, limit_price);
+            out = RouterV1BestPriceSweep::route_order(
+                feeds,
+                side_lower,
+                quantity,
+                limit_price);
             return out;
     }
 }

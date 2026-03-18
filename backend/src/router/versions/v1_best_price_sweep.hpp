@@ -1,23 +1,14 @@
 #pragma once
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <optional>
-#include <queue>
-#include <string>
-#include <vector>
-
 #include "router/router_common.hpp"
 
 struct RouterV1BestPriceSweep {
 public:
-    RoutingDecision route_order(
+    static RoutingDecision route_order(
         const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
         const std::string& side_lower,
         double quantity,
-        const std::optional<double>& limit_price) const
+        const std::optional<double>& limit_price)
     {
         RoutingDecision out;
         out.requested_qty = quantity;
@@ -180,6 +171,7 @@ public:
             out.slices.push_back(
                 RouteSlice{
                     *snapshot_cursors[idx].venue,
+                    ExecutionType::MARKET,
                     q,
                     venue_notional[idx] / q
                 }

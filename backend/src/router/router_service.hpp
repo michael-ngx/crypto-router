@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -11,6 +12,7 @@
 #include "server/feed_manager.hpp"
 #include "router/router_framework.hpp"
 #include "supabase/storage_supabase.hpp"
+#include "venues/venue_api.hpp"
 
 struct RouterOrderRequest {
     std::string user_id;
@@ -45,10 +47,12 @@ class RouterService {
 public:
     RouterService(FeedManager& feeds,
                   const std::string& db_conn_str,
-                  router::RouterVersionId router_version = router::kDefaultRouterVersionId)
+                  router::RouterVersionId router_version,
+                  const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info)
         : feeds_(feeds),
           db_conn_str_(db_conn_str),
-          router_version_(router_version) {}
+          router_version_(router_version),
+          venue_static_info_(venue_static_info) {}
 
     std::variant<RouterOrderResult, RouterError> create_order(
         const RouterOrderRequest& req) const
@@ -67,6 +71,17 @@ public:
                 "symbol not supported"
             };
         }
+
+        // Fetch user venue runtime inputs on each routing call.
+        std::unordered_map<std::string, VenueRuntimeInfo> venue_runtime_info;
+        try {
+            venue_runtime_info = fetch_user_venue_runtime_info(req.user_id);
+        } catch (const std::exception& e) {
+            return RouterError{
+                RouterErrorCode::DatabaseFailure,
+                std::string("failed to load user trailing volume: ") + e.what()
+            };
+        }
         
         /* ***********************************
          * CALCULATE ROUTING PATH
@@ -76,7 +91,9 @@ public:
             routing_inputs->feeds,
             req.side_lower,
             req.quantity_requested,
-            req.limit_price
+            req.limit_price,
+            venue_static_info_,
+            venue_runtime_info
         );
 
         // For orders we require at least some immediately routable size.
@@ -212,7 +229,48 @@ public:
     }
 
 private:
+    std::unordered_map<std::string, VenueRuntimeInfo> fetch_user_venue_runtime_info(
+        const std::string& user_id) const
+    {
+        std::unordered_map<std::string, VenueRuntimeInfo> out;
+
+        pqxx::connection conn(supabase::with_connect_timeout(db_conn_str_));
+        pqxx::work txn(conn);
+
+        // Approximate trailing venue volume using planned leg notional over the last 30 days.
+        // This keeps fee tiers meaningful before live execution reporting is wired in.
+        const auto result = txn.exec(
+            R"(
+                SELECT
+                    ol.venue,
+                    COALESCE(SUM((ol.quantity_planned * ol.price_planned)::double precision), 0.0)
+                        AS trailing_volume_usd
+                FROM public.order_legs ol
+                JOIN public.orders o ON o.id = ol.order_id
+                WHERE o.user_id = $1
+                  AND o.created_at >= NOW() - INTERVAL '30 days'
+                  AND o.status <> 'cancelled'
+                  AND o.status <> 'failed'
+                GROUP BY ol.venue
+            )",
+            pqxx::params(user_id)
+        );
+
+        out.reserve(result.size());
+        for (const auto& row : result) {
+            VenueRuntimeInfo runtime_info;
+            runtime_info.trailing_volume_usd = std::max(0.0, row[1].as<double>());
+            out.emplace(row[0].as<std::string>(), runtime_info);
+        }
+
+        // TODO: Add also the latency and volatility runtime inputs
+
+        txn.commit();
+        return out;
+    }
+
     FeedManager& feeds_;
     const std::string& db_conn_str_;
     router::RouterVersionId router_version_;
+    const std::unordered_map<std::string, VenueStaticInfo>& venue_static_info_;
 };

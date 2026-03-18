@@ -15,6 +15,7 @@
 
 #include "server/feed_manager.hpp"
 #include "venues/venue_registry.hpp"
+#include "venues/venue_api.hpp"
 #include "server/venues_config.hpp"
 #include "server/http_server.hpp"
 #include "server/http_routes.hpp"
@@ -184,6 +185,15 @@ int main() {
         venues.push_back(FeedManager::VenueRuntime{venue_cfg.name, factory, std::move(api)});
     }
 
+    // Fetch venue-level metadata (fee schedules, etc.) from each venue at startup.
+    // This map is immutable after construction and shared across all request handlers.
+    std::unordered_map<std::string, VenueStaticInfo> venue_static_info;
+    for (const auto& venue : venues) {
+        if (venue.api) {
+            venue_static_info.emplace(venue.name, venue.api->fetch_venue_static_info());
+        }
+    }
+
     // Parse FeedManager options from environment variables
     // If some options are missing or invalid, use defaults (e.g. empty hot pairs, 180s idle timeout, 15s sweep interval, no prewarm all)
     FeedManager::Options feed_opts;
@@ -226,7 +236,7 @@ int main() {
               << router::router_version_name(router_version)
               << std::endl;
     HttpServer server{ioc, ep, [&](auto const& req, auto& res){
-      handle_request(feed_manager, db_conn_str, router_version, req, res);
+      handle_request(feed_manager, db_conn_str, router_version, venue_static_info, req, res);
     }};
     server.run();
 

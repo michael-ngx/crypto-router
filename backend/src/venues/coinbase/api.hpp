@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <iostream>
 #include <mutex>
 #include <string>
 #include <unordered_set>
@@ -19,6 +20,34 @@ public:
     std::vector<std::string> list_supported_pairs() const override {
         ensure_pairs_loaded();
         return supported_pairs_;
+    }
+
+    // Coinbase Advanced Trade fee endpoint requires authentication.
+    // Use the publicly documented volume-tiered schedule as the starting point;
+    // upgrade to the authenticated /fees endpoint when API keys are configured.
+    // Source: https://help.coinbase.com/en/exchange/trading-and-funding/exchange-fees
+    VenueStaticInfo fetch_venue_static_info() const override {
+        VenueStaticInfo info;
+        info.fees.fetched_from_api = false;
+
+        // Coinbase Advanced Trade tiered fee schedule (as of 2025).
+        // {volume_threshold_usd, maker_fee, taker_fee}
+        info.fees.tiers = {
+            {           0.0, 0.0040, 0.0060},   //        $0 –   $10K
+            {       10000.0, 0.0025, 0.0040},   //      $10K –   $50K
+            {       50000.0, 0.0015, 0.0025},   //      $50K –  $100K
+            {      100000.0, 0.0010, 0.0020},   //     $100K –    $1M
+            {     1000000.0, 0.0008, 0.0018},   //       $1M –   $15M
+            {    15000000.0, 0.0005, 0.0015},   //      $15M –   $75M
+            {    75000000.0, 0.0000, 0.0010},   //      $75M –  $250M
+            {   250000000.0, 0.0000, 0.0008},   //     $250M –  $400M
+            {   400000000.0, 0.0000, 0.0005},   //     $400M+
+        };
+        std::cerr << "[coinbase] Using documented fee schedule ("
+                  << info.fees.tiers.size()
+                  << " tiers); authenticated fee endpoint not configured."
+                  << std::endl;
+        return info;
     }
 
 private:
