@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { formatDynamicPrice } from "@/lib/priceFormat";
 
 export type OrderLevel = {
@@ -120,108 +121,302 @@ export function ConsolidatedOrderBook({ book, lastUpdated }: Props) {
   const { bids, asks } = normalized;
   const { base, quote } = parseSymbol(normalized.symbol);
 
+  const [selectedVenue, setSelectedVenue] = useState<string>("ALL");
+
+  const allVenues = useMemo(() => {
+    const venues = new Set<string>();
+    bids.forEach((b) => b.venue && venues.add(b.venue));
+    asks.forEach((a) => a.venue && venues.add(a.venue));
+    return Array.from(venues).sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+  }, [bids, asks]);
+
+  const filtered = useMemo(() => {
+    if (selectedVenue === "ALL") {
+      return { bids, asks };
+    }
+    return {
+      bids: bids.filter((b) => b.venue === selectedVenue),
+      asks: asks.filter((a) => a.venue === selectedVenue),
+    };
+  }, [bids, asks, selectedVenue]);
+
+  const effectiveBids = filtered.bids;
+  const effectiveAsks = filtered.asks;
+
+  const SIDE_ROWS = 6;
+  const SIDE_ROWS_WITH_OVERLAP = SIDE_ROWS + 1;
+
+  // Bids panel: highest -> lowest (top -> bottom) and we keep one extra
+  // element so we can extract a single overlap level.
+  const bidsBestAll = [...effectiveBids]
+    .sort((a, b) => b.price - a.price)
+    .slice(0, SIDE_ROWS_WITH_OVERLAP);
+
+  // Asks panel uses the lowest asks closest to market, but displayed
+  // high->low (reverse) so the "closest" ask is at the bottom.
+  const asksBestLowAll = [...effectiveAsks]
+    .sort((a, b) => a.price - b.price)
+    .slice(0, SIDE_ROWS_WITH_OVERLAP);
+
+  const bestBid = bidsBestAll.length ? bidsBestAll[0].price : null; // highest bid
+  const bestAsk = asksBestLowAll.length ? asksBestLowAll[0].price : null; // lowest ask
+  const overlapExists =
+    bestBid !== null && bestAsk !== null && bestBid >= bestAsk;
+
+  // Single overlap extraction for display.
+  const overlapBid = overlapExists ? bidsBestAll[0] ?? null : null;
+  const overlapAsk = overlapExists ? asksBestLowAll[0] ?? null : null;
+
+  // Extract exactly one overlapping bid+ask into the overlap section,
+  // and remove them from the top/bottom panels.
+  const bidsBest = overlapBid ? bidsBestAll.slice(1) : bidsBestAll;
+  const asksBestLow = overlapAsk ? asksBestLowAll.slice(1) : asksBestLowAll;
+  const asksDisplay = asksBestLow.slice().reverse();
+
   const maxSizeAcross = Math.max(
-    ...bids.map((b) => b.size),
-    ...asks.map((a) => a.size),
+    ...bidsBest.map((b) => b.size),
+    ...asksBestLow.map((a) => a.size),
     0
   );
   const scale = computeScale(maxSizeAcross);
-  const rows = Math.max(bids.length, asks.length);
 
   const badgeBase = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold";
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-white">
-        <table className="min-w-full text-xs">
-          <thead className="bg-slate-100">
-            <tr className="text-left text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
-              <th className="px-3 py-2 w-24">Exchange</th>
-              <th className="px-3 py-2 w-32">Size ({base})</th>
-              <th className="px-3 py-2 w-32">Price ({quote})</th>
+      <div className="mb-3 flex items-center justify-between gap-3 text-[11px] text-slate-300">
+        <div className="font-semibold uppercase tracking-wide text-slate-400">
+          Order Book
+        </div>
+        {allVenues.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-400">Exchange</span>
+            <select
+              value={selectedVenue}
+              onChange={(e) => setSelectedVenue(e.target.value)}
+              className="rounded-full border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/70"
+            >
+              <option value="ALL">All exchanges</option>
+              {allVenues.map((venue) => (
+                <option key={venue} value={venue}>
+                  {venue}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
 
-              <th className="px-3 py-2 w-32 text-right">Price ({quote})</th>
-              <th className="px-3 py-2 w-32 text-right">Size ({base})</th>
-              <th className="px-3 py-2 w-24 text-right">Exchange</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: rows }).map((_, i) => {
-              const bid = bids[i];
-              const ask = asks[i];
+      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900/90">
+        <div className="flex flex-col">
+          {/* Asks panel (top) */}
+          <div className="border-b border-slate-800/30 bg-slate-900/30">
+            <div className="w-full">
+              <div className="px-3 py-2 text-right text-[11px] font-semibold text-slate-300">
+                Asks ({base})
+              </div>
+              <div className="flex flex-col">
+                {Array.from({ length: SIDE_ROWS }).map((_, i) => {
+                  const ask = asksDisplay[i];
+                  const askWidth =
+                    ask && scale > 0
+                      ? Math.min(100, (ask.size / scale) * 100)
+                      : 0;
 
-              const bidWidth =
-                bid && scale > 0 ? Math.min(100, (bid.size / scale) * 100) : 0;
-              const askWidth =
-                ask && scale > 0 ? Math.min(100, (ask.size / scale) * 100) : 0;
+                  const isOverlapRow =
+                    overlapExists && ask && bestBid !== null && ask.price <= bestBid;
 
-              return (
-                <tr
-                  key={i}
-                  className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}
-                >
-                  {/* Bids left */}
-                  <td className="px-3 py-1.5 align-middle">
-                    {bid?.venue ? (
-                      <span
-                        className={`${badgeBase} ${venueBadgeColor(
-                          bid.venue
-                        )}`}
-                      >
-                        {bid.venue}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-1.5 align-middle">
-                    {bid ? (
-                      <div className="relative h-5 w-full bg-green-50">
-                        <div
-                          className="absolute inset-y-0 left-0 bg-green-200"
-                          style={{ width: `${bidWidth}%` }}
-                        />
-                        <div className="relative z-10 flex h-full items-center justify-end pr-1 text-[11px] text-slate-800">
-                          {formatSize(bid.size)}
+                  return (
+                    <div
+                      key={`ask-${i}`}
+                      className={[
+                        "flex w-full items-stretch",
+                        i % 2 === 0 ? "bg-slate-950/40" : "bg-slate-900/40",
+                        isOverlapRow ? "bg-amber-900/20" : "",
+                      ].join(" ")}
+                      style={{ minHeight: 24 }}
+                    >
+                      <div className="flex-1" />
+
+                      <div className="w-1/2 flex items-center gap-2 px-3 py-1.5">
+                        <div className="w-24 text-left text-[11px] text-red-500 font-medium">
+                          {ask ? formatDynamicPrice(ask.price) : ""}
+                        </div>
+
+                        <div className="flex-1">
+                          {ask ? (
+                            <div className="relative h-5 w-full bg-red-900/20 rounded-sm">
+                              <div
+                                className="absolute inset-y-0 right-0 bg-red-700/40 rounded-sm"
+                                style={{ width: `${askWidth}%` }}
+                              />
+                              <div className="relative z-10 flex h-full items-center justify-start pl-1 text-[11px] text-slate-200">
+                                {formatSize(ask.size)}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="min-w-[62px] text-right">
+                          {ask?.venue ? (
+                            <span className={`${badgeBase} ${venueBadgeColor(ask.venue)}`}>
+                              {ask.venue}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-1.5 align-middle text-[11px] text-slate-800">
-                    {bid ? formatDynamicPrice(bid.price) : ""}
-                  </td>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
-                  {/* Asks right */}
-                  <td className="px-3 py-1.5 align-middle text-right text-[11px] text-red-500">
-                    {ask ? formatDynamicPrice(ask.price) : ""}
-                  </td>
-                  <td className="px-3 py-1.5 align-middle">
-                    {ask ? (
-                      <div className="relative h-5 w-full bg-red-50">
-                        <div
-                          className="absolute inset-y-0 right-0 bg-red-200"
-                          style={{ width: `${askWidth}%` }}
-                        />
-                        <div className="relative z-10 flex h-full items-center justify-start pl-1 text-[11px] text-slate-800">
-                          {formatSize(ask.size)}
+          {/* Overlap indicator (middle) */}
+          <div className="bg-slate-900/40 border-b border-slate-800/30">
+            <div className="flex flex-col items-center justify-center px-1 py-2">
+              {overlapExists && overlapBid !== null && overlapAsk !== null ? (
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-900/40 bg-amber-900/20 px-2 py-0.5">
+                  <span className="text-[11px] font-semibold text-amber-300">
+                    Overlap
+                  </span>
+                </div>
+              ) : (
+                <div className="text-[11px] font-semibold text-slate-400">
+                  No overlap
+                </div>
+              )}
+
+              <div className="mt-2 w-full px-1">
+                {overlapExists && overlapBid !== null && overlapAsk !== null ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded border border-green-900/40 bg-green-900/20 px-2 py-1">
+                      <div className="text-[10px] font-semibold text-green-300">
+                        Bid
+                      </div>
+                      <div className="mt-0.5 text-[12px] font-semibold text-green-300">
+                        {formatDynamicPrice(overlapBid.price)}
+                      </div>
+                      <div className="text-[10px] text-slate-200">
+                        {formatSize(overlapBid.size)}
+                      </div>
+                      {overlapBid.venue ? (
+                        <div className="mt-1">
+                          <span
+                            className={`${badgeBase} ${venueBadgeColor(
+                              overlapBid.venue
+                            )}`}
+                          >
+                            {overlapBid.venue}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="rounded border border-red-900/40 bg-red-900/20 px-2 py-1">
+                      <div className="text-[10px] font-semibold text-red-300">
+                        Ask
+                      </div>
+                      <div className="mt-0.5 text-[12px] font-semibold text-red-300">
+                        {formatDynamicPrice(overlapAsk.price)}
+                      </div>
+                      <div className="text-[10px] text-slate-200">
+                        {formatSize(overlapAsk.size)}
+                      </div>
+                      {overlapAsk.venue ? (
+                        <div className="mt-1">
+                          <span
+                            className={`${badgeBase} ${venueBadgeColor(
+                              overlapAsk.venue
+                            )}`}
+                          >
+                            {overlapAsk.venue}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                    </div>
+                    <div className="mt-2 text-[10px] leading-tight text-slate-400 text-center">
+                      Overlap means the highest bid is at/above the lowest ask
+                      ({formatDynamicPrice(overlapBid.price)} {" >="} {formatDynamicPrice(overlapAsk.price)}).
+                      This indicates a crossed book and potential cross-venue arbitrage.
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center text-[10px] text-slate-500">
+                    No overlap (Bid &lt; Ask)
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Bids panel (bottom) */}
+          <div className="bg-slate-900/30">
+            <div className="w-full">
+              <div className="px-3 py-2 text-[11px] font-semibold text-slate-300">
+                Bids ({base})
+              </div>
+              <div className="flex flex-col">
+                {Array.from({ length: SIDE_ROWS }).map((_, i) => {
+                  const bid = bidsBest[i];
+                  const bidWidth =
+                    bid && scale > 0
+                      ? Math.min(100, (bid.size / scale) * 100)
+                      : 0;
+
+                  const isOverlapRow =
+                    overlapExists && bid && bestAsk !== null && bid.price >= bestAsk;
+
+                  return (
+                    <div
+                      key={`bid-${i}`}
+                      className={[
+                        "flex w-full items-stretch",
+                        i % 2 === 0 ? "bg-slate-950/40" : "bg-slate-900/40",
+                        isOverlapRow ? "bg-amber-900/20" : "",
+                      ].join(" ")}
+                      style={{ minHeight: 24 }}
+                    >
+                      <div className="w-1/2 flex items-center gap-2 px-3 py-1.5">
+                        <div className="min-w-[62px]">
+                          {bid?.venue ? (
+                            <span className={`${badgeBase} ${venueBadgeColor(bid.venue)}`}>
+                              {bid.venue}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="flex-1">
+                          {bid ? (
+                            <div className="relative h-5 w-full bg-green-900/20 rounded-sm">
+                              <div
+                                className="absolute inset-y-0 left-0 bg-green-700/40 rounded-sm"
+                                style={{ width: `${bidWidth}%` }}
+                              />
+                              <div className="relative z-10 flex h-full items-center justify-end pr-1 text-[11px] text-slate-200">
+                                {formatSize(bid.size)}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="w-24 text-right text-[11px] text-green-400 font-medium">
+                          {bid ? formatDynamicPrice(bid.price) : ""}
                         </div>
                       </div>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-1.5 align-middle text-right">
-                    {ask?.venue ? (
-                      <span
-                        className={`${badgeBase} ${venueBadgeColor(
-                          ask.venue
-                        )}`}
-                      >
-                        {ask.venue}
-                      </span>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+
+                      <div className="flex-1" />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="mt-2 flex justify-end text-[10px] text-slate-400">
