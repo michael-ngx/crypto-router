@@ -65,6 +65,7 @@ DEFINES := -DBOOST_ERROR_CODE_HEADER_ONLY
 SOURCES := src/venues/binance/ws.cpp \
            src/venues/coinbase/ws.cpp \
            src/venues/kraken/ws.cpp \
+           src/venues/okx/ws.cpp \
            src/md/symbol_codec.cpp \
            src/ui/master_feed.cpp \
            src/server/http_routes.cpp \

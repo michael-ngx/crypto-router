@@ -82,6 +82,7 @@ function venueBadgeColor(venue: string): string {
     kraken: "bg-purple-500 text-white",
     coinbase: "bg-blue-500 text-white",
     binance: "bg-yellow-400 text-slate-900",
+    okx: "bg-emerald-500 text-white",
   };
 
   const v = venue.toLowerCase();
@@ -105,15 +106,20 @@ function parseSymbol(sym: string): { base: string; quote: string } {
 type Props = {
   book: BookResponse | null;
   lastUpdated: number | null;
+  statusMessage?: string | null;
 };
 
-export function ConsolidatedOrderBook({ book, lastUpdated }: Props) {
+export function ConsolidatedOrderBook({
+  book,
+  lastUpdated,
+  statusMessage,
+}: Props) {
   const normalized = normalizeBook(book);
 
   if (!normalized || (normalized.bids.length === 0 && normalized.asks.length === 0)) {
     return (
       <div className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3 text-sm text-slate-400">
-        No book data yet.
+        {statusMessage ?? "No book data yet."}
       </div>
     );
   }

@@ -9,6 +9,7 @@
 #include "binance/factory.hpp"
 #include "coinbase/factory.hpp"
 #include "kraken/factory.hpp"
+#include "okx/factory.hpp"
 
 class VenueRegistry {
 public:
@@ -39,6 +40,7 @@ private:
         register_factory(make_binance_factory());
         register_factory(make_coinbase_factory());
         register_factory(make_kraken_factory());
+        register_factory(make_okx_factory());
     }
 
     void register_factory(VenueFactory factory) {

@@ -66,6 +66,11 @@ std::string SymbolCodec::to_venue(const std::string &venue, const std::string &c
         v.erase(std::remove(v.begin(), v.end(), '\0'), v.end());
         return v;
     }
+    else if (venue_lc == "okx")
+    {
+        // OKX instId matches canonical (e.g. BTC-USDT)
+        return c;
+    }
     return c;
 }
 
@@ -105,6 +110,11 @@ std::string SymbolCodec::to_canonical(const std::string &venue, const std::strin
                 return canonize(base + "-" + quote);
             }
         }
+        return canonize(v);
+    }
+    else if (venue_lc == "okx")
+    {
+        // OKX instId matches canonical (e.g. BTC-USDT)
         return canonize(v);
     }
     return canonize(v);
