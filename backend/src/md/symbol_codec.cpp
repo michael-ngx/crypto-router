@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <string>
 
 namespace {
@@ -40,7 +41,7 @@ std::string canonize(std::string s)
 std::string SymbolCodec::to_venue(const std::string &venue, const std::string &c)
 {
     std::string venue_lc = venue;
-    for (auto &ch : venue_lc) ch = tolower(ch);
+    for (auto &ch : venue_lc) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
 
     if (venue_lc == "kraken")
     {
@@ -54,13 +55,30 @@ std::string SymbolCodec::to_venue(const std::string &venue, const std::string &c
     {
         return c;
     }
+    else if (venue_lc == "binance")
+    {
+        // BTC-USDT -> btcusdt (lowercase, no separator)
+        std::string v = c;
+        for (auto &ch : v) {
+            if (ch == '-') ch = '\0';
+            else ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+        }
+        v.erase(std::remove(v.begin(), v.end(), '\0'), v.end());
+        return v;
+    }
     return c;
+}
+
+namespace {
+    // Binance symbols are like "btcusdt" (no separator). Split by known quote assets.
+    const char* kBinanceQuotes[] = {"usdt", "busd", "usdc", "usd", "btc", "eth", "bnb"};
+    const std::size_t kBinanceQuotesLen = sizeof(kBinanceQuotes) / sizeof(kBinanceQuotes[0]);
 }
 
 std::string SymbolCodec::to_canonical(const std::string &venue, const std::string &v)
 {
     std::string venue_lc = venue;
-    for (auto &ch : venue_lc) ch = tolower(ch);
+    for (auto &ch : venue_lc) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
 
     if (venue_lc == "kraken")
     {
@@ -72,6 +90,21 @@ std::string SymbolCodec::to_canonical(const std::string &venue, const std::strin
     }
     else if (venue_lc == "coinbase")
     {
+        return canonize(v);
+    }
+    else if (venue_lc == "binance")
+    {
+        std::string vlo = v;
+        for (auto &ch : vlo) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+        for (std::size_t i = 0; i < kBinanceQuotesLen; ++i) {
+            const char* q = kBinanceQuotes[i];
+            const std::size_t qlen = std::strlen(q);
+            if (vlo.size() > qlen && vlo.compare(vlo.size() - qlen, qlen, q) == 0) {
+                std::string base = vlo.substr(0, vlo.size() - qlen);
+                std::string quote = q;
+                return canonize(base + "-" + quote);
+            }
+        }
         return canonize(v);
     }
     return canonize(v);

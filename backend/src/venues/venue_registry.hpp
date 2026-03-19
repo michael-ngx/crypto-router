@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "venue_factory.hpp"
+#include "binance/factory.hpp"
 #include "coinbase/factory.hpp"
 #include "kraken/factory.hpp"
 
@@ -35,6 +36,7 @@ public:
 
 private:
     VenueRegistry() {
+        register_factory(make_binance_factory());
         register_factory(make_coinbase_factory());
         register_factory(make_kraken_factory());
     }

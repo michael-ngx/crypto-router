@@ -8,6 +8,7 @@ struct VenueConfig {
 };
 
 inline const std::vector<VenueConfig> kVenueConfigs = {
+    {"Binance"},
     {"Coinbase"},
     {"Kraken"},
 };
