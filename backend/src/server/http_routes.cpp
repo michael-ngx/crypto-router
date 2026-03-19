@@ -818,22 +818,33 @@ void handle_book(FeedManager& feeds,
 {
     // Maximum UI depth accepted by /api/book.
     constexpr std::size_t MAX_TOP_DEPTH = 50;
+    constexpr std::size_t MAX_DEBUG_DEPTH = 200;
 
     std::size_t depth = MAX_TOP_DEPTH;
     std::string symbol;
+    bool debug = false;
 
+    for (auto const& p : url.params()) {
+        if (p.key == "debug" && (p.value == "1" || p.value == "true")) {
+            debug = true;
+        } else if (p.key == "symbol") {
+            symbol = std::string(p.value);
+        }
+    }
+    if (debug) {
+        depth = 100;  // use deep book for debug to surface all venues
+    }
     for (auto const& p : url.params()) {
         if (p.key == "depth") {
             try {
                 std::size_t d = std::stoul(std::string(p.value));
-                if (d > 0 && d <= MAX_TOP_DEPTH) {
+                std::size_t max_d = debug ? MAX_DEBUG_DEPTH : MAX_TOP_DEPTH;
+                if (d > 0 && d <= max_d) {
                     depth = d;
                 }
             } catch (...) {
                 // ignore invalid input
             }
-        } else if (p.key == "symbol") {
-            symbol = std::string(p.value);
         }
     }
 
@@ -890,6 +901,28 @@ void handle_book(FeedManager& feeds,
     // Consolidated ladders with venue information for UI
     os << "\"bids\":"; json_ladder_array(os, snap.bids); os << ",";
     os << "\"asks\":"; json_ladder_array(os, snap.asks);
+
+    // Optional debug: per-venue level counts in the final output
+    if (debug) {
+        std::unordered_map<std::string, std::pair<std::size_t, std::size_t>> by_venue;
+        for (const auto& lvl : snap.bids) {
+            by_venue[lvl.venue].first++;
+        }
+        for (const auto& lvl : snap.asks) {
+            by_venue[lvl.venue].second++;
+        }
+        os << ",\"debug\":{\"by_venue\":{";
+        bool first = true;
+        for (const auto& v : snap.venues) {
+            auto it = by_venue.find(v);
+            std::size_t bc = (it != by_venue.end()) ? it->second.first : 0;
+            std::size_t ac = (it != by_venue.end()) ? it->second.second : 0;
+            if (!first) os << ",";
+            first = false;
+            os << "\"" << json_escape(v) << "\":{\"bids\":" << bc << ",\"asks\":" << ac << "}";
+        }
+        os << "},\"depth\":" << depth << "}";
+    }
     os << "}"; // root object
 
     res.set(http::field::content_type, "application/json");

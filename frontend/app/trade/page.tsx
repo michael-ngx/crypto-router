@@ -179,7 +179,7 @@ export default function TradePage() {
       try {
         const url = `${API_BASE_URL}/api/book?symbol=${encodeURIComponent(
           selectedPair
-        )}&depth=10`;
+        )}&depth=24`;
 
         const resp = await fetch(url);
         let data: BookResponse | null = null;
@@ -209,15 +209,16 @@ export default function TradePage() {
           (data?.bids && data.bids.length > 0) ||
           (data?.asks && data.asks.length > 0);
 
-        if (!isCancelled && currentSeq === pollSeq && hasLevels) {
-          // Valid snapshot: enter READY state
+        if (!isCancelled && currentSeq === pollSeq) {
+          // Always update bookData on success so UI can show status message
           setBookData(data);
-          setIsLoading(false);
           setError(null);
-          lastUpdateRef.current = data?.last_updated_ms ?? null;
+          if (hasLevels) {
+            setIsLoading(false);
+            lastUpdateRef.current = data?.last_updated_ms ?? null;
+          }
+          // If !hasLevels: keep loading state, UI will show "Connecting..."
         }
-        // If !hasLevels: treat as "no new valid data".
-        // We keep whatever state we were already in (loading or ready).
       } catch (err: any) {
         if (!isCancelled) {
           // Error state: we keep polling but show "Updating..." + error,
@@ -342,9 +343,16 @@ export default function TradePage() {
         </div>
       )}
 
-      {/* Enforce mutual exclusivity: table only when we have valid data */}
-      {displayBook && !isLoading ? (
-        <ConsolidatedOrderBook book={displayBook} lastUpdated={lastUpdateRef.current} />
+      {/* Order book: show when we have a pair and either data or a response to display */}
+      {selectedPair && (bookData || isLoading) ? (
+        <ConsolidatedOrderBook
+          book={displayBook}
+          lastUpdated={lastUpdateRef.current}
+          statusMessage={
+            displayBook?.status?.message ??
+            (isLoading ? "Connecting to venues…" : null)
+          }
+        />
       ) : null}
 
       {/* Order Form */}
