@@ -23,7 +23,8 @@ using tcp = boost::asio::ip::tcp;
 inline std::optional<std::string> https_get(
     const std::string& host,
     const std::string& target,
-    const std::string& user_agent)
+    const std::string& user_agent,
+    std::uint64_t max_body_size = 8 * 1024 * 1024)
 {
     try {
         net::io_context ioc;
@@ -54,8 +55,10 @@ inline std::optional<std::string> https_get(
         http::write(stream, req);
 
         beast::flat_buffer buffer;
-        http::response<http::string_body> res;
-        http::read(stream, buffer, res);
+        http::response_parser<http::string_body> parser;
+        parser.body_limit(max_body_size);
+        http::read(stream, buffer, parser);
+        http::response<http::string_body> res = parser.release();
 
         beast::error_code ec;
         stream.shutdown(ec);

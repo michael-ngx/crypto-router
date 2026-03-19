@@ -62,7 +62,8 @@ RPATH := -Wl,-rpath,$(SIMDJSON_PREFIX)/lib \
 DEFINES := -DBOOST_ERROR_CODE_HEADER_ONLY
 
 # Source files
-SOURCES := src/venues/coinbase/ws.cpp \
+SOURCES := src/venues/binance/ws.cpp \
+           src/venues/coinbase/ws.cpp \
            src/venues/kraken/ws.cpp \
            src/md/symbol_codec.cpp \
            src/ui/master_feed.cpp \
