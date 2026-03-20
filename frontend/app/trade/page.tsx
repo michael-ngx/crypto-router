@@ -41,6 +41,12 @@ export default function TradePage() {
   const [bookData, setBookData] = useState<BookResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedVenues, setSelectedVenues] = useState<string[]>([
+    "Binance",
+    "Coinbase",
+    "Kraken",
+    "OKX",
+  ]);
 
   const { baseToQuotes, bases } = useBaseQuoteFromPairs(availablePairs);
   const quoteOptions = selectedBase ? baseToQuotes[selectedBase] ?? [] : [];
@@ -352,6 +358,15 @@ export default function TradePage() {
             displayBook?.status?.message ??
             (isLoading ? "Connecting to venues…" : null)
           }
+          availableVenues={
+            displayBook?.venues?.length
+              ? [...displayBook.venues].sort((a, b) =>
+                  a.toLowerCase().localeCompare(b.toLowerCase())
+                )
+              : ["Binance", "Coinbase", "Kraken", "OKX"]
+          }
+          selectedVenues={selectedVenues}
+          onSelectedVenuesChange={setSelectedVenues}
         />
       ) : null}
 
