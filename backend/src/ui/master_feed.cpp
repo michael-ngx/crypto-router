@@ -1,12 +1,10 @@
 #include "master_feed.hpp"
+#include "md/feed_liveness.hpp"
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
 
 namespace {
-constexpr std::int64_t kTransportStaleNs = 10'000'000'000; // 10 seconds
-constexpr std::int64_t kQuietBookNs = 5'000'000'000;       // 5 seconds
-
 std::int64_t now_ns() {
     using namespace std::chrono;
     return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
@@ -49,15 +47,6 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         }
     }
 
-    // Keep explicit venue coverage independent from which venue contributes top levels.
-    std::unordered_set<std::string> seen_venues;
-    for (const auto& state : states) {
-        if (seen_venues.insert(state.venue).second) {
-            out.venues.push_back(state.venue);
-        }
-    }
-    std::sort(out.venues.begin(), out.venues.end());
-
     const auto now = now_ns();
     std::vector<std::shared_ptr<const BookSnapshot>> connected_snapshots;
     connected_snapshots.reserve(states.size());
@@ -68,21 +57,22 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
     // Keep feeds with active transport; mark "quiet" if transport is alive but
     // no recent book updates have arrived.
     for (const auto& state : states) {
-        if (state.last_transport_ns > 0) {
+        if (state.last_transport_ns > 0 || state.last_book_update_ns > 0) {
             has_seen_transport = true;
         }
         if (state.last_transport_ns <= 0) continue;
-        if (now - state.last_transport_ns > kTransportStaleNs) continue;
+        if (now - state.last_transport_ns > md::liveness::kTransportStaleNs) continue;
 
         has_connected_transport = true;
         if (state.last_book_update_ns > 0 &&
-            now - state.last_book_update_ns <= kQuietBookNs) {
+            now - state.last_book_update_ns <= md::liveness::kQuietBookNs) {
             has_recent_book_update = true;
         }
 
         auto& snapshot = state.snapshot;
         if (!snapshot) continue;
         if (snapshot->ts_ns <= 0) continue;
+        if (snapshot->bids.empty() && snapshot->asks.empty()) continue;
 
         connected_snapshots.push_back(snapshot);
         if (snapshot->ts_ms > out.last_updated_ms) {
@@ -105,6 +95,15 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         return out;
     }
 
+    // Only expose venues that are currently contributing live, non-empty book levels.
+    std::unordered_set<std::string> active_venues;
+    for (const auto& snapshot : connected_snapshots) {
+        if (active_venues.insert(snapshot->venue).second) {
+            out.venues.push_back(snapshot->venue);
+        }
+    }
+    std::sort(out.venues.begin(), out.venues.end());
+
     // Flatten all per-venue ladders into a single list with venue info.
     std::vector<UILadderLevel> all_bids;
     std::vector<UILadderLevel> all_asks;
@@ -124,8 +123,9 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         }
     }
 
-    // Sort and trim to desired depth.
-    auto sort_and_trim = [depth](auto& v, bool bids_side) {
+    // Sort the merged ladders.
+    // Note: `depth` is enforced per venue above; do not trim globally here.
+    auto sort_merged = [](auto& v, bool bids_side) {
         if (v.empty()) return;
 
         if (bids_side) {
@@ -144,13 +144,10 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
                       });
         }
 
-        if (v.size() > depth) {
-            v.resize(depth);
-        }
     };
 
-    sort_and_trim(all_bids, true);
-    sort_and_trim(all_asks, false);
+    sort_merged(all_bids, true);
+    sort_merged(all_asks, false);
 
     out.bids = std::move(all_bids);
     out.asks = std::move(all_asks);

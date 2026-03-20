@@ -24,7 +24,7 @@ struct UIConsolidated {
     std::vector<UILadderLevel> bids;
     std::vector<UILadderLevel> asks;
 
-    // All exchanges subscribed for this symbol (regardless of top-level contribution).
+    // Exchanges currently contributing live, non-empty levels.
     std::vector<std::string> venues;
 
     // True when all venues are stale or missing.
