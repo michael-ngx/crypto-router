@@ -214,8 +214,9 @@ void db_finalize_order(const std::string& db_conn,
         } else if (total_qty >= requested_qty - 1e-12) {
             order_status = "filled";
         } else {
-            // Partially filled and now terminal (expired with partial fill)
-            order_status = "partially_filled";
+            // Partially filled and now terminal — use "expired" so the
+            // frontend treats it as terminal. Fill qty is in quantity_filled.
+            order_status = "expired";
         }
 
         const double avg_px = safe_avg(total_notional, total_qty);
@@ -323,15 +324,22 @@ void LimitExecutor::run(
     const auto deadline = std::chrono::steady_clock::now() + config_.ttl;
 
     // ── Arrival check ────────────────────────────────────────────────────────
+    // A missing feed or null/empty snapshot is not a rejection — the feed may
+    // still be warming up. Those legs fall through to the poll loop.
     for (auto& leg : legs) {
         auto fit = feeds_by_venue.find(leg.venue);
         if (fit == feeds_by_venue.end()) {
+            // No feed at all for this venue — permanently reject.
             leg.rejected = leg.done = true;
+            db_reject_leg(db_conn_str_, order_id, leg);
             continue;
         }
+
         auto snap = fit->second->load_snapshot();
-        if (!snap) {
-            leg.rejected = leg.done = true;
+        if (!snap || (snap->bids.empty() && snap->asks.empty())) {
+            // Feed not ready yet — skip arrival check, poll loop will retry.
+            db_submit_leg(db_conn_str_, order_id, leg);
+            leg.submitted = true;
             continue;
         }
 
@@ -348,9 +356,9 @@ void LimitExecutor::run(
                 auto fill = simulate_limit_fill(
                     *snap, leg.venue, side, leg.planned_qty, leg.limit_price, taker_fee);
                 if (fill.quantity_filled > 1e-12) {
-                    leg.filled_qty    += fill.quantity_filled;
+                    leg.filled_qty     += fill.quantity_filled;
                     leg.total_notional += fill.total_notional;
-                    leg.commission    += fill.commission_usd;
+                    leg.commission     += fill.commission_usd;
                     if (leg.filled_qty >= leg.planned_qty - 1e-12)
                         leg.done = true;
                 }
@@ -392,7 +400,7 @@ void LimitExecutor::run(
             auto fit = feeds_by_venue.find(leg.venue);
             if (fit == feeds_by_venue.end()) continue;
             auto snap = fit->second->load_snapshot();
-            if (!snap) continue;
+            if (!snap || (snap->bids.empty() && snap->asks.empty())) continue;
 
             const double remaining = leg.planned_qty - leg.filled_qty;
             if (remaining <= 1e-12) { leg.done = true; continue; }
