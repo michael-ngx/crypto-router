@@ -4,6 +4,9 @@
 #include <chrono>
 #include <unordered_set>
 
+#include "util/data_logger.hpp" 
+static util::MarketDataLogger ml_logger("ml_training_data.csv"); 
+
 namespace {
 std::int64_t now_ns() {
     using namespace std::chrono;
@@ -129,14 +132,14 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
         if (v.empty()) return;
 
         if (bids_side) {
-            // Bids: highest price first; tie-breaker by larger size.
+            // Bids highest price first, tie-breaker by larger size.
             std::sort(v.begin(), v.end(),
                       [](const UILadderLevel& a, const UILadderLevel& b) {
                           if (a.price != b.price) return a.price > b.price;
                           return a.size > b.size;
                       });
         } else {
-            // Asks: lowest price first; tie-breaker by larger size.
+            // Asks lowest price first, tie-breaker by larger size.
             std::sort(v.begin(), v.end(),
                       [](const UILadderLevel& a, const UILadderLevel& b) {
                           if (a.price != b.price) return a.price < b.price;
@@ -151,6 +154,17 @@ UIConsolidated UIMasterFeed::snapshot_consolidated(std::size_t depth) const {
 
     out.bids = std::move(all_bids);
     out.asks = std::move(all_asks);
+
+    // Log top of the consolidated book for ml training
+    if (!out.bids.empty() && !out.asks.empty()) {
+        ml_logger.log_snapshot(
+            "consolidated", 
+            out.bids.front().price, 
+            out.bids.front().size, 
+            out.asks.front().price, 
+            out.asks.front().size
+        );
+    }
 
     return out;
 }

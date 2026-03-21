@@ -28,18 +28,22 @@ public:
         if (file_.is_open()) file_.close();
     }
 
-    // Call this right after a new snapshot is generated
     void log_snapshot(const std::string& venue, double b_price, double b_vol, double a_price, double a_vol) {
         if (!file_.is_open()) return;
 
+        // Get current time in milliseconds
         auto now = std::chrono::system_clock::now();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
-        // Lock briefly so threads don't scramble the CSV lines
         std::lock_guard<std::mutex> lock(mutex_);
-        file_ << ms << "," << venue << "," 
-              << b_price << "," << b_vol << "," 
-              << a_price << "," << a_vol << "\n";
+        
+        // Writing every piece of data separated by commas
+        file_ << ms << "," 
+            << venue << "," 
+            << b_price << "," 
+            << b_vol << "," 
+            << a_price << "," 
+            << a_vol << std::endl; // std::endl is the magic fix here
     }
 };
 
