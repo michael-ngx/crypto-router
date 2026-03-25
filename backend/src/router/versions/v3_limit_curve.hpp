@@ -504,6 +504,11 @@ private:
         return it->second.fees.tier_for_volume(vol).maker_fee;
     }
 
+    /*
+    * ****************************************************************
+    * Market order routing via heap-based SOR
+    * ****************************************************************
+    */
     static RoutingDecision route_market_order_heap(
         const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
         bool buy,
@@ -541,7 +546,10 @@ private:
                 return a.level_index > b.level_index;
             }
         };
-
+        
+        /*
+        * (1) Load snapshots and per-venue taker fee. Store snapshot and fee together in VenueBook struct
+        */
         std::vector<VenueBook> books;
         books.reserve(feeds.size());
 
@@ -558,6 +566,9 @@ private:
             books.push_back({snap->venue, fee, snap});
         }
 
+        /*
+        * (2) Initialize a heap with best level per venue, using **fee-adjusted** effective price
+        */
         const int venue_count = static_cast<int>(books.size());
         std::priority_queue<HeapNode, std::vector<HeapNode>, HeapCompare> heap(
             HeapCompare{buy}
@@ -575,7 +586,10 @@ private:
 
             heap.push({i, 0, eff});
         }
-
+        
+        /*
+        * (3) Pops best level repeatedly, consumes quantity, pushes next level from same venue until order fully filled/heap exhausted.
+        */
         std::vector<double> qty_by_venue(venue_count, 0.0);
         std::vector<double> notional_by_venue(venue_count, 0.0);
 
@@ -586,7 +600,7 @@ private:
             heap.pop();
 
             const int venue_idx = node.venue_index;
-            const auto& vb = books[venue_idx];
+            const auto& vb = books[venue_idx];      //TODO inefficient copy?????
             const auto& book = *vb.snapshot;
 
             const auto& levels = buy ? book.asks : book.bids;
@@ -608,7 +622,11 @@ private:
                 heap.push({venue_idx, next, eff});
             }
         }
+        
 
+        /*
+        * (4) Aggregate per-venue execution slices (RouteSlice)
+        */
         double total_notional = 0.0;
         double total_qty = 0.0;
 
@@ -645,6 +663,12 @@ private:
         return out;
     }
 
+
+    /*
+    * ****************************************************************
+    * Limit order routing via frontier-based SOR with expected cost optimization
+    * ****************************************************************
+    */
     static RoutingDecision route_limit_order_expected_cost(
         const std::vector<std::shared_ptr<IVenueFeed>>& feeds,
         bool buy_side,

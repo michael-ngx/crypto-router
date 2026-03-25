@@ -405,7 +405,6 @@ export default function OrderDetailsPage() {
                           <th className="px-3 py-2 text-left">Qty Planned</th>
                           <th className="px-3 py-2 text-left">Limit Price</th>
                           <th className="px-3 py-2 text-left">Price Planned</th>
-                          <th className="px-3 py-2 text-left">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800 text-slate-200">
@@ -415,7 +414,6 @@ export default function OrderDetailsPage() {
                             <td className="px-3 py-2">{formatQty(leg.quantity_planned)}</td>
                             <td className="px-3 py-2">{formatPx(leg.limit_price)}</td>
                             <td className="px-3 py-2">{formatPx(leg.price_planned)}</td>
-                            <td className="px-3 py-2">{leg.status}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -450,7 +448,6 @@ export default function OrderDetailsPage() {
                         <th className="px-3 py-2 text-left">Qty Submitted</th>
                         <th className="px-3 py-2 text-left">Price Submitted</th>
                         <th className="px-3 py-2 text-left">Submitted At</th>
-                        <th className="px-3 py-2 text-left">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800 text-slate-200">
@@ -460,7 +457,6 @@ export default function OrderDetailsPage() {
                           <td className="px-3 py-2">{formatQty(leg.quantity_submitted)}</td>
                           <td className="px-3 py-2">{formatPx(leg.price_submitted)}</td>
                           <td className="px-3 py-2">{formatTs(leg.submitted_at)}</td>
-                          <td className="px-3 py-2">{leg.status}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -492,7 +488,6 @@ export default function OrderDetailsPage() {
                           <th className="px-3 py-2 text-left">Client Order ID</th>
                           <th className="px-3 py-2 text-left">Venue Order ID</th>
                           <th className="px-3 py-2 text-left">Acknowledged At</th>
-                          <th className="px-3 py-2 text-left">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800 text-slate-200">
@@ -502,7 +497,6 @@ export default function OrderDetailsPage() {
                             <td className="px-3 py-2">{leg.client_order_id ?? "N/A"}</td>
                             <td className="px-3 py-2">{leg.venue_order_id ?? "N/A"}</td>
                             <td className="px-3 py-2">{formatTs(leg.acknowledged_at)}</td>
-                            <td className="px-3 py-2">{leg.status}</td>
                           </tr>
                         ))}
                       </tbody>

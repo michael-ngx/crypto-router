@@ -1,5 +1,6 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ssl.hpp>
 #include <memory>
 #include <thread>
 #include <iostream>
@@ -23,6 +24,7 @@
 #include "supabase/storage_supabase.hpp"
 
 using tcp = boost::asio::ip::tcp;
+namespace ssl = boost::asio::ssl;
 
 // Helper function to load .env file and set environment variables
 void load_env_file(const std::string& filepath = ".env") {
@@ -139,6 +141,19 @@ bool parse_env_bool(const char* name, bool fallback) {
     return fallback;
 }
 
+std::string parse_env_string(const char* name, const std::string& fallback = {}) {
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) return fallback;
+    return std::string(raw);
+}
+
+[[noreturn]] void fail_tls_configuration(const std::string& msg) {
+    throw std::runtime_error(
+        "TLS configuration error: " + msg +
+        ". Set TLS_CERT_FILE and TLS_KEY_FILE to PEM files."
+    );
+}
+
 int main() {
     // Load .env file
     load_env_file();
@@ -227,20 +242,45 @@ int main() {
 
 
     /* **********************************************
-    * ***************** HTTP Server *****************
+    * **************** HTTPS Server *****************
     *************************************************
     */
+    const std::string tls_cert_file = parse_env_string("TLS_CERT_FILE");
+    const std::string tls_key_file = parse_env_string("TLS_KEY_FILE");
+    if (tls_cert_file.empty()) fail_tls_configuration("TLS_CERT_FILE is missing");
+    if (tls_key_file.empty()) fail_tls_configuration("TLS_KEY_FILE is missing");
+
+    const std::string bind_address = parse_env_string("HTTPS_BIND_ADDRESS", "0.0.0.0");
+    const int https_port = parse_env_int("HTTPS_PORT", 8443);
+    if (https_port <= 0 || https_port > 65535) {
+        throw std::runtime_error("Invalid HTTPS_PORT value. Must be between 1 and 65535.");
+    }
+
     boost::asio::io_context ioc{1};   // TODO: Make multiple HTTP threads
-    tcp::endpoint ep{boost::asio::ip::make_address("0.0.0.0"), 8080};
+    ssl::context ssl_ctx{ssl::context::tls_server};
+    ssl_ctx.set_options(
+        ssl::context::default_workarounds |
+        ssl::context::no_sslv2 |
+        ssl::context::no_sslv3 |
+        ssl::context::no_tlsv1 |
+        ssl::context::no_tlsv1_1
+    );
+    ssl_ctx.use_certificate_chain_file(tls_cert_file);
+    ssl_ctx.use_private_key_file(tls_key_file, ssl::context::file_format::pem);
+
+    tcp::endpoint ep{
+        boost::asio::ip::make_address(bind_address),
+        static_cast<unsigned short>(https_port)
+    };
     std::cout << "[router] Active strategy: "
               << router::router_version_name(router_version)
               << std::endl;
-    HttpServer server{ioc, ep, [&](auto const& req, auto& res){
+    HttpServer server{ioc, ssl_ctx, ep, [&](auto const& req, auto& res){
       handle_request(feed_manager, db_conn_str, router_version, venue_static_info, req, res);
     }};
     server.run();
 
-    std::cout << "HTTP listening on :8080" << std::endl;
+    std::cout << "HTTPS listening on " << bind_address << ":" << https_port << std::endl;
     std::cout << "Server started successfully" << std::endl;
     
     ioc.run();
