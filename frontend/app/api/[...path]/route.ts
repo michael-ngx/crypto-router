@@ -46,19 +46,30 @@ async function proxy(
   init: Omit<RequestInit, "headers">,
 ): Promise<NextResponse> {
   const url = upstreamUrl(pathSegments, req.nextUrl.search);
-  const res = await fetch(url, {
-    ...init,
-    headers: forwardHeaders(req),
-  });
-  const data = await res.text();
-  const contentType =
-    res.headers.get("content-type") ?? "application/octet-stream";
-  const headers = corsHeaders(req);
-  headers.set("Content-Type", contentType);
-  return new NextResponse(data, {
-    status: res.status,
-    headers,
-  });
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers: forwardHeaders(req),
+    });
+    const data = await res.text();
+    const contentType =
+      res.headers.get("content-type") ?? "application/octet-stream";
+    const headers = corsHeaders(req);
+    headers.set("Content-Type", contentType);
+    return new NextResponse(data, {
+      status: res.status,
+      headers,
+    });
+  } catch {
+    return NextResponse.json(
+      {
+        error: "proxy_upstream_failed",
+        message:
+          "Could not reach the API server. On Vercel, set BACKEND_URL to http://YOUR_HOST:8080 (no NEXT_PUBLIC_).",
+      },
+      { status: 502, headers: corsHeaders(req) },
+    );
+  }
 }
 
 /** Browsers send this before cross-origin POST with JSON; without it Next returns 404. */

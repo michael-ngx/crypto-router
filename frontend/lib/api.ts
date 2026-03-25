@@ -1,11 +1,27 @@
 /**
- * Same-origin `/api/...` is handled by `app/api/[...path]/route.ts`, which proxies to
- * `BACKEND_URL` (default `http://localhost:8080`). Use this in both dev and production so
- * the browser never calls `localhost:8080` directly (avoids ERR_CONNECTION_REFUSED when
- * the UI is open but the API is only reachable via the proxy).
+ * Same-origin `/api/...` → `app/api/[...path]/route.ts` → `BACKEND_URL` on the server.
  *
- * Set `NEXT_PUBLIC_API_BASE_URL` only when the browser must talk to a different origin
- * (e.g. debugging without the proxy). Do not use `process.env.VERCEL` here — it is not
- * available in the client bundle.
+ * In **production** builds we ignore `NEXT_PUBLIC_API_BASE_URL` when it would make the
+ * browser call `localhost` or plain `http://` (mixed content on HTTPS). Those values are
+ * easy to leave in Vercel by mistake and cause `net::ERR_CONNECTION_REFUSED` to :8080.
+ *
+ * Set `NEXT_PUBLIC_API_BASE_URL` only for an **https** API on another host (rare here).
  */
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+function clientApiBase(): string {
+  const raw = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (process.env.NODE_ENV !== "production") {
+    return raw;
+  }
+  if (!raw) return "";
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(raw)) {
+    return "";
+  }
+  if (raw.startsWith("http://")) {
+    return "";
+  }
+  return raw;
+}
+
+export const API_BASE_URL = clientApiBase();
