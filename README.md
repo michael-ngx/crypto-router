@@ -1,6 +1,6 @@
 # Cryptocurrency Order Routing System
 
-[Deployed website](496cryptorouter.vercel.app)
+[Deployed website](https://496cryptorouter.vercel.app/)
 
 [Final Report](docs/Technical%20Details/Final%20Report.pdf)
 
