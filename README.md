@@ -1,27 +1,11 @@
 # Cryptocurrency Order Routing System
 
+[Deployed website](496cryptorouter.vercel.app)
+
+[Final Report](docs/Technical%20Details/Final%20Report.pdf)
+
+[Codebase navigation help](docs/Technical%20Details/Technical%20details.md)
+
 <p align="center">
   <img src="./assets/crypto-router-ui.gif"/>
 </p>
-
-
-### Run app
-
-1) Clone the repository.
-2) Then run the following on separate terminals
-
-Backend
-```bash
-cd backend
-make
-./build/server
-```
-
-Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Check [Technical Details](docs/Technical%20Details/Technical%20details.md) for implementation explanation
