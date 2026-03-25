@@ -6,6 +6,24 @@ function backendOrigin(): string {
   return raw.replace(/\/$/, "");
 }
 
+function corsHeaders(req: NextRequest): Headers {
+  const h = new Headers();
+  const origin = req.headers.get("origin");
+  if (origin) {
+    h.set("Access-Control-Allow-Origin", origin);
+    h.set("Vary", "Origin");
+  } else {
+    h.set("Access-Control-Allow-Origin", "*");
+  }
+  h.set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+  h.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Accept, Cookie",
+  );
+  h.set("Access-Control-Max-Age", "86400");
+  return h;
+}
+
 /** Browser calls /api/pairs → upstream http://backend/api/pairs */
 function upstreamUrl(pathSegments: string[], search: string): string {
   const tail = pathSegments.length ? pathSegments.join("/") : "";
@@ -35,10 +53,17 @@ async function proxy(
   const data = await res.text();
   const contentType =
     res.headers.get("content-type") ?? "application/octet-stream";
+  const headers = corsHeaders(req);
+  headers.set("Content-Type", contentType);
   return new NextResponse(data, {
     status: res.status,
-    headers: { "Content-Type": contentType },
+    headers,
   });
+}
+
+/** Browsers send this before cross-origin POST with JSON; without it Next returns 404. */
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
 }
 
 export async function GET(
